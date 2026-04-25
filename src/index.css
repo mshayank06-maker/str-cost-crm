@@ -10,8 +10,7 @@
 
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 35%),
+  background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 35%),
     radial-gradient(circle at top right, rgba(14, 165, 233, 0.12), transparent 30%),
     #f6f8fb;
 }
@@ -47,7 +46,6 @@ select {
 .brand-block h2 {
   margin: 0;
   font-size: 26px;
-  letter-spacing: -0.04em;
 }
 
 .brand-block p {
@@ -64,20 +62,12 @@ select {
   border-radius: 16px;
   cursor: pointer;
   text-align: left;
-  transition: 0.2s ease;
 }
 
-.nav-btn:hover {
-  background: rgba(59, 130, 246, 0.18);
-  color: white;
-  transform: translateX(3px);
-}
-
+.nav-btn:hover,
 .nav-btn.active {
   background: linear-gradient(135deg, #2563eb, #38bdf8);
   color: white;
-  border-color: transparent;
-  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.35);
 }
 
 .main-content {
@@ -86,34 +76,26 @@ select {
 }
 
 .topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 18px;
   margin-bottom: 28px;
 }
 
 .topbar h1 {
   margin: 0;
   font-size: 36px;
-  letter-spacing: -0.05em;
-  line-height: 1.05;
 }
 
 .topbar p {
   margin: 8px 0 0;
   color: #64748b;
-  font-size: 16px;
 }
 
 .panel,
 .stat-card,
 .dashboard-filter-card {
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e2e8f0;
   border-radius: 24px;
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
 }
 
 .dashboard-filter-card {
@@ -130,7 +112,6 @@ select {
   color: #64748b;
   margin-bottom: 7px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .dashboard-filter-card select,
@@ -142,35 +123,17 @@ select {
   border: 1px solid #cbd5e1;
   border-radius: 14px;
   background: white;
-  outline: none;
 }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, 1fr);
   gap: 18px;
-  margin-bottom: 22px;
 }
 
 .stat-card {
   padding: 22px;
   min-height: 120px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  position: relative;
-  overflow: hidden;
-}
-
-.stat-card::after {
-  content: "";
-  position: absolute;
-  right: -24px;
-  top: -24px;
-  width: 90px;
-  height: 90px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15), rgba(56, 189, 248, 0.18));
 }
 
 .stat-card span {
@@ -178,12 +141,12 @@ select {
   font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .stat-card strong {
+  display: block;
+  margin-top: 16px;
   font-size: 30px;
-  letter-spacing: -0.04em;
 }
 
 .editor-grid {
@@ -203,7 +166,6 @@ select {
 .panel h3 {
   margin: 0 0 18px;
   font-size: 21px;
-  letter-spacing: -0.03em;
 }
 
 .section-head {
@@ -211,7 +173,6 @@ select {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 18px;
-  gap: 12px;
 }
 
 .action-btn {
@@ -222,7 +183,6 @@ select {
   border-radius: 14px;
   cursor: pointer;
   font-weight: 700;
-  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
 }
 
 .action-btn.secondary {
@@ -243,9 +203,15 @@ select {
   font-weight: 700;
 }
 
-.mini-danger-btn:hover {
-  background: #dc2626;
-  color: white;
+.mini-action-btn {
+  background: #e0f2fe;
+  color: #075985;
+  border: 1px solid #bae6fd;
+  padding: 7px 11px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 800;
+  margin-right: 6px;
 }
 
 .table-wrap {
@@ -278,47 +244,39 @@ th {
   color: #334155;
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 tbody tr {
   cursor: pointer;
-  transition: 0.18s ease;
 }
 
-tbody tr:hover {
-  background: #f8fbff;
-}
-
+tbody tr:hover,
 .selected-row {
-  background: linear-gradient(90deg, #eff6ff, #ffffff) !important;
-  box-shadow: inset 4px 0 0 #2563eb;
+  background: #eff6ff;
 }
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
+}
+
+.full-width {
+  grid-column: 1 / -1;
 }
 
 .calc-box {
   margin-top: 18px;
   padding: 16px;
-  background: linear-gradient(180deg, #f8fafc, white);
-  border: 1px solid #e2e8f0;
+  background: #f8fafc;
   border-radius: 18px;
 }
 
 .metric-row {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid #e2e8f0;
-}
-
-.metric-row:last-child {
-  border-bottom: 0;
 }
 
 .empty-state {
@@ -329,6 +287,29 @@ tbody tr:hover {
   color: #64748b;
 }
 
+.badge {
+  display: inline-flex;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.badge.healthy {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge.low {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .invoice-actions {
   display: flex;
   justify-content: flex-end;
@@ -336,13 +317,8 @@ tbody tr:hover {
   margin-bottom: 12px;
 }
 
-.invoice-panel {
-  background: rgba(239, 246, 255, 0.9);
-}
-
 .invoice-paper {
   background: white;
-  border: 1px solid #dbeafe;
   border-radius: 24px;
   padding: 28px;
 }
@@ -350,33 +326,19 @@ tbody tr:hover {
 .invoice-header {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
-  align-items: flex-start;
-  padding-bottom: 20px;
   border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 20px;
 }
 
 .invoice-logo {
   width: 150px;
-  height: auto;
-  object-fit: contain;
-  display: block;
 }
 
 .invoice-meta {
   text-align: right;
 }
 
-.invoice-meta h2 {
-  margin: 0 0 10px;
-  font-size: 26px;
-  letter-spacing: -0.04em;
-}
-
 .bill-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 18px;
   padding: 18px 0;
 }
 
@@ -384,21 +346,13 @@ tbody tr:hover {
   padding: 14px;
   border-radius: 18px;
   background: #f8fafc;
-  border: 1px solid #e2e8f0;
 }
 
 .bill-label {
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: #64748b;
-  margin-bottom: 7px;
   font-weight: 800;
-}
-
-.invoice-table th {
-  background: #eff6ff;
-  white-space: nowrap;
 }
 
 .invoice-totals {
@@ -408,17 +362,6 @@ tbody tr:hover {
   background: #f8fafc;
   padding: 12px 16px;
   border-radius: 18px;
-  border: 1px solid #e2e8f0;
-}
-
-.total-line {
-  font-size: 18px;
-}
-
-.invoice-notes {
-  margin-top: 20px;
-  padding-top: 18px;
-  border-top: 1px solid #e2e8f0;
 }
 
 .loading-screen {
@@ -428,8 +371,6 @@ tbody tr:hover {
   justify-content: center;
   font-size: 20px;
   font-weight: 800;
-  color: #0f172a;
-  background: #f6f8fb;
 }
 
 @media (max-width: 1100px) {
@@ -440,32 +381,16 @@ tbody tr:hover {
   }
 
   .sidebar {
-    position: relative;
     height: auto;
+    position: relative;
   }
 
   .stats-grid {
     grid-template-columns: 1fr;
   }
-
-  .topbar {
-    flex-direction: column;
-  }
-
-  .invoice-header {
-    flex-direction: column;
-  }
-
-  .invoice-meta {
-    text-align: left;
-  }
 }
 
 @media print {
-  @page {
-    margin: 12mm;
-  }
-
   .sidebar,
   .topbar,
   .invoice-actions,
@@ -476,30 +401,8 @@ tbody tr:hover {
   }
 
   .app-shell,
-  .main-content,
-  .invoice-grid,
-  .form-panel,
-  .invoice-panel {
+  .main-content {
     display: block !important;
-    width: 100% !important;
     padding: 0 !important;
-    background: white !important;
-  }
-
-  .panel,
-  .invoice-paper {
-    border: 0 !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    background: white !important;
-  }
-
-  body {
-    background: white !important;
-  }
-
-  .invoice-logo {
-    width: 140px !important;
-    display: block !important;
   }
 }
