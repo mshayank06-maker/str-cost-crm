@@ -18,13 +18,8 @@ body {
 
 button,
 input,
-select,
-textarea {
+select {
   font: inherit;
-}
-
-img {
-  max-width: 100%;
 }
 
 .app-shell {
@@ -111,7 +106,6 @@ img {
   font-size: 16px;
 }
 
-.topbar-card,
 .panel,
 .stat-card,
 .dashboard-filter-card {
@@ -122,20 +116,14 @@ img {
   backdrop-filter: blur(14px);
 }
 
-.topbar-card,
-.dashboard-filter-card {
-  padding: 14px;
-  min-width: 170px;
-}
-
 .dashboard-filter-card {
   max-width: 300px;
+  padding: 14px;
   margin-bottom: 18px;
 }
 
-.topbar-card label,
-.form-grid label,
-.dashboard-filter-card label {
+.dashboard-filter-card label,
+.form-grid label {
   display: block;
   font-size: 12px;
   font-weight: 700;
@@ -145,12 +133,10 @@ img {
   letter-spacing: 0.04em;
 }
 
-.topbar-card input,
-.topbar-card select,
+.dashboard-filter-card select,
 .form-grid input,
 .form-grid select,
-.invoice-actions select,
-.dashboard-filter-card select {
+.invoice-actions select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid #cbd5e1;
@@ -161,13 +147,9 @@ img {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
   margin-bottom: 22px;
-}
-
-.stats-grid.six {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .stat-card {
@@ -202,12 +184,6 @@ img {
 .stat-card strong {
   font-size: 30px;
   letter-spacing: -0.04em;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 18px;
 }
 
 .editor-grid {
@@ -325,6 +301,14 @@ tbody tr:hover {
   gap: 14px;
 }
 
+.calc-box {
+  margin-top: 18px;
+  padding: 16px;
+  background: linear-gradient(180deg, #f8fafc, white);
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+}
+
 .metric-row {
   display: flex;
   justify-content: space-between;
@@ -335,42 +319,6 @@ tbody tr:hover {
 
 .metric-row:last-child {
   border-bottom: 0;
-}
-
-.calc-box {
-  margin-top: 18px;
-  padding: 16px;
-  background: linear-gradient(180deg, #f8fafc, white);
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-}
-
-.muted {
-  color: #64748b;
-  line-height: 1.6;
-}
-
-.badge {
-  display: inline-flex;
-  padding: 6px 11px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.badge.green {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.badge.amber {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.badge.red {
-  background: #fee2e2;
-  color: #991b1b;
 }
 
 .empty-state {
@@ -427,7 +375,7 @@ tbody tr:hover {
 
 .bill-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 18px;
   padding: 18px 0;
 }
@@ -473,12 +421,21 @@ tbody tr:hover {
   border-top: 1px solid #e2e8f0;
 }
 
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  background: #f6f8fb;
+}
+
 @media (max-width: 1100px) {
   .app-shell,
   .editor-grid,
-  .content-grid,
-  .invoice-grid,
-  .bill-grid {
+  .invoice-grid {
     grid-template-columns: 1fr;
   }
 
@@ -487,9 +444,8 @@ tbody tr:hover {
     height: auto;
   }
 
-  .stats-grid,
-  .stats-grid.six {
-    grid-template-columns: repeat(2, 1fr);
+  .stats-grid {
+    grid-template-columns: 1fr;
   }
 
   .topbar {

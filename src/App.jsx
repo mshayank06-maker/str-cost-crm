@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import "./index.css";
+import { supabase } from "./supabaseClient";
 
 const starterProperties = [
   { id: "P-001", name: "120XY SL 2B", address: "17 Seagull Lane", beds: 2, approvalLimit: 100 },
@@ -55,16 +56,6 @@ const priceGuide = [
   { task: "Fridge / freezer defrost service", category: "Appliances", hourlyRate: 40 },
 ];
 
-const starterLinen = [
-  { id: "LIN-001", propertyId: "P-001", propertyName: "120XY SL 2B", item: "Duvet Cover", usableStock: 8, inLaundry: 2, incomingStock: 0, avgWeeklyUsage: 4, peakWeeklyUsage: 6, supplierLeadDays: 5, safetyStock: 3, maxStockCap: 12, damaged: 0, missing: 1 },
-  { id: "LIN-002", propertyId: "P-002", propertyName: "503WG 1B", item: "Bed Sheet", usableStock: 6, inLaundry: 3, incomingStock: 2, avgWeeklyUsage: 5, peakWeeklyUsage: 7, supplierLeadDays: 4, safetyStock: 4, maxStockCap: 14, damaged: 1, missing: 0 },
-];
-
-const starterKeys = [
-  { id: "KEY-001", propertyId: "P-001", propertyName: "120XY SL 2B", type: "Front Door Key", status: "In Office", holder: "Reception" },
-  { id: "KEY-002", propertyId: "P-002", propertyName: "503WG 1B", type: "Fob", status: "Missing", holder: "Unknown" },
-];
-
 function currency(value) {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(value || 0));
 }
@@ -73,18 +64,15 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function formatDate(dateStr) {
-  const d = new Date(dateStr);
-  return Number.isNaN(d.getTime()) ? dateStr : d.toLocaleDateString("en-GB");
+function formatDate(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString("en-GB");
 }
 
-function formatMonth(monthValue) {
-  if (monthValue === "all") return "All Months";
-  const [year, month] = monthValue.split("-");
-  return new Date(Number(year), Number(month) - 1).toLocaleString("en-GB", {
-    month: "long",
-    year: "numeric",
-  });
+function formatMonth(value) {
+  if (value === "all") return "All Months";
+  const [year, month] = value.split("-");
+  return new Date(Number(year), Number(month) - 1).toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
 function generateInvoiceNumber(invoices) {
@@ -92,28 +80,23 @@ function generateInvoiceNumber(invoices) {
   return `INV-${year}-${String(invoices.length + 1).padStart(4, "0")}`;
 }
 
-function calculateLinenMetrics(row, occupancyFactor = 1) {
-  const leadWeeks = row.supplierLeadDays / 7;
-  const forecastUsageDuringLead = row.peakWeeklyUsage * leadWeeks * occupancyFactor;
-  const totalAvailable = row.usableStock + row.inLaundry + row.incomingStock;
-  const projectedAvailable = totalAvailable - forecastUsageDuringLead;
-  const reorderPoint = forecastUsageDuringLead + row.safetyStock;
-  const recommendedOrder = Math.max(
-    0,
-    Math.min(Math.ceil(reorderPoint - totalAvailable), row.maxStockCap - totalAvailable)
-  );
-
-  let status = "Healthy";
-  if (projectedAvailable <= row.safetyStock) status = "Critical";
-  else if (projectedAvailable <= reorderPoint) status = "Reorder Soon";
-
+function propertyToDb(p) {
   return {
-    totalAvailable,
-    forecastUsageDuringLead: Number(forecastUsageDuringLead.toFixed(1)),
-    projectedAvailable: Number(projectedAvailable.toFixed(1)),
-    reorderPoint: Number(reorderPoint.toFixed(1)),
-    recommendedOrder,
-    status,
+    id: p.id,
+    name: p.name,
+    address: p.address,
+    beds: Number(p.beds || 0),
+    approval_limit: Number(p.approvalLimit || 0),
+  };
+}
+
+function propertyFromDb(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    address: p.address,
+    beds: p.beds,
+    approvalLimit: p.approval_limit,
   };
 }
 
@@ -127,17 +110,14 @@ function calculateJobTotal(job) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [occupancyFactor, setOccupancyFactor] = useState(1);
+  const [loading, setLoading] = useState(true);
 
-  const [properties, setProperties] = useState(starterProperties);
-  const [linen, setLinen] = useState(starterLinen);
-  const [keys, setKeys] = useState(starterKeys);
+  const [properties, setProperties] = useState([]);
   const [maintenance, setMaintenance] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [invoiceItems, setInvoiceItems] = useState([]);
 
   const [selectedPropertyId, setSelectedPropertyId] = useState("P-001");
-  const [selectedLinenId, setSelectedLinenId] = useState("LIN-001");
-  const [selectedKeyId, setSelectedKeyId] = useState("KEY-001");
   const [selectedMaintenanceId, setSelectedMaintenanceId] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [dashboardMonthFilter, setDashboardMonthFilter] = useState("all");
@@ -148,33 +128,94 @@ export default function App() {
     propertyId: "P-001",
   });
 
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+
+    await supabase
+      .from("properties")
+      .upsert(starterProperties.map(propertyToDb), { onConflict: "id" });
+
+    const [propertiesRes, maintenanceRes, invoicesRes, invoiceItemsRes] = await Promise.all([
+      supabase.from("properties").select("*").order("id"),
+      supabase.from("maintenance_jobs").select("*").order("created_at", { ascending: false }),
+      supabase.from("invoices").select("*").order("created_at", { ascending: false }),
+      supabase.from("invoice_items").select("*"),
+    ]);
+
+    setProperties(propertiesRes.error ? starterProperties : (propertiesRes.data || []).map(propertyFromDb));
+
+    setMaintenance(
+      (maintenanceRes.data || []).map((job) => ({
+        id: job.id,
+        propertyId: job.property_id,
+        propertyName: job.property_name,
+        propertyAddress: job.property_address,
+        title: job.title,
+        taskName: job.task_name,
+        category: job.category,
+        assignedTo: job.assigned_to,
+        status: job.status,
+        labourHours: job.labour_hours,
+        labourRate: job.labour_rate,
+        materialCost: job.material_cost,
+        invoiceStatus: job.invoice_status,
+      }))
+    );
+
+    setInvoices(
+      (invoicesRes.data || []).map((inv) => ({
+        id: inv.id,
+        invoiceNumber: inv.invoice_number,
+        invoiceDate: inv.invoice_date,
+        dueDate: inv.due_date,
+        propertyId: inv.property_id,
+        propertyName: inv.property_name,
+        propertyAddress: inv.property_address,
+        labourSubtotal: inv.labour_subtotal,
+        materialsTotal: inv.materials_total,
+        total: inv.total,
+        status: inv.status,
+      }))
+    );
+
+    setInvoiceItems(
+      (invoiceItemsRes.data || []).map((item) => ({
+        id: item.id,
+        invoiceId: item.invoice_id,
+        jobId: item.job_id,
+        title: item.title,
+        taskName: item.task_name,
+        labourHours: item.labour_hours,
+        labourRate: item.labour_rate,
+        labourCharge: item.labour_charge,
+        materialCost: item.material_cost,
+        totalCost: item.total_cost,
+      }))
+    );
+
+    setLoading(false);
+  }
+
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId) || properties[0];
-  const selectedLinen = linen.find((l) => l.id === selectedLinenId) || linen[0];
-  const selectedKey = keys.find((k) => k.id === selectedKeyId) || keys[0];
   const selectedMaintenance = maintenance.find((m) => m.id === selectedMaintenanceId) || null;
   const selectedInvoice = invoices.find((i) => i.id === selectedInvoiceId) || null;
 
-  const linenWithMetrics = useMemo(
-    () => linen.map((item) => ({ ...item, ...calculateLinenMetrics(item, occupancyFactor) })),
-    [linen, occupancyFactor]
-  );
+  const selectedInvoiceWithItems = selectedInvoice
+    ? { ...selectedInvoice, items: invoiceItems.filter((item) => item.invoiceId === selectedInvoice.id) }
+    : null;
 
   const maintenanceWithCost = useMemo(
-    () =>
-      maintenance.map((job) => ({
-        ...job,
-        labourCharge: calculateJobLabour(job),
-        totalCost: calculateJobTotal(job),
-      })),
+    () => maintenance.map((job) => ({ ...job, labourCharge: calculateJobLabour(job), totalCost: calculateJobTotal(job) })),
     [maintenance]
   );
 
   const invoiceJobs = useMemo(() => {
     return maintenanceWithCost.filter(
-      (job) =>
-        job.propertyId === invoiceForm.propertyId &&
-        job.status === "Completed" &&
-        job.invoiceStatus !== "Billed"
+      (job) => job.propertyId === invoiceForm.propertyId && job.status === "Completed" && job.invoiceStatus !== "Billed"
     );
   }, [maintenanceWithCost, invoiceForm.propertyId]);
 
@@ -190,22 +231,19 @@ export default function App() {
 
   const dashboard = useMemo(() => {
     return {
-      maintenanceCostsCharged: filteredDashboardInvoices.reduce((sum, inv) => sum + inv.labourSubtotal, 0),
+      maintenanceCostsCharged: filteredDashboardInvoices.reduce((sum, inv) => sum + Number(inv.labourSubtotal || 0), 0),
       openMaintenance: maintenanceWithCost.filter((j) => j.status !== "Completed").length,
-      criticalLinen: linenWithMetrics.filter((l) => l.status === "Critical").length,
-      reorderSoon: linenWithMetrics.filter((l) => l.status === "Reorder Soon").length,
-      missingKeys: keys.filter((k) => k.status === "Missing").length,
-      invoiceCount: filteredDashboardInvoices.length,
+      invoices: filteredDashboardInvoices.length,
     };
-  }, [filteredDashboardInvoices, maintenanceWithCost, linenWithMetrics, keys]);
+  }, [filteredDashboardInvoices, maintenanceWithCost]);
 
-  const addMaintenance = () => {
-    const property = properties[0];
+  async function addMaintenance() {
+    const property = selectedProperty || properties[0];
     const guide = priceGuide[0];
-    const id = `JOB-${1000 + maintenance.length + 1}`;
+    if (!property) return;
 
     const job = {
-      id,
+      id: `JOB-${Date.now()}`,
       propertyId: property.id,
       propertyName: property.name,
       propertyAddress: property.address,
@@ -220,62 +258,124 @@ export default function App() {
       invoiceStatus: "Not Started",
     };
 
-    setMaintenance((prev) => [job, ...prev]);
-    setSelectedMaintenanceId(id);
-  };
+    const { error } = await supabase.from("maintenance_jobs").insert({
+      id: job.id,
+      property_id: job.propertyId,
+      property_name: job.propertyName,
+      property_address: job.propertyAddress,
+      title: job.title,
+      task_name: job.taskName,
+      category: job.category,
+      assigned_to: job.assignedTo,
+      status: job.status,
+      labour_hours: job.labourHours,
+      labour_rate: job.labourRate,
+      material_cost: job.materialCost,
+      invoice_status: job.invoiceStatus,
+    });
 
-  const deleteMaintenanceJob = (jobId) => {
-    const job = maintenance.find((m) => m.id === jobId);
-    if (job?.invoiceStatus === "Billed") {
-      alert("This job is already billed. Delete the invoice first if you need to remove it.");
+    if (error) {
+      alert(error.message);
       return;
     }
 
-    setMaintenance((prev) => prev.filter((job) => job.id !== jobId));
+    setMaintenance((prev) => [job, ...prev]);
+    setSelectedMaintenanceId(job.id);
+  }
 
-    if (selectedMaintenanceId === jobId) {
-      setSelectedMaintenanceId("");
-    }
-  };
+  async function updateMaintenance(field, value) {
+    const numeric = ["labourHours", "labourRate", "materialCost"];
+    const updatedValue = numeric.includes(field) ? Number(value) : value;
 
-  const changeMaintenanceProperty = (propertyId) => {
+    const updated = maintenance.map((job) =>
+      job.id === selectedMaintenanceId ? { ...job, [field]: updatedValue } : job
+    );
+
+    setMaintenance(updated);
+
+    const job = updated.find((j) => j.id === selectedMaintenanceId);
+    if (!job) return;
+
+    await supabase
+      .from("maintenance_jobs")
+      .update({
+        property_id: job.propertyId,
+        property_name: job.propertyName,
+        property_address: job.propertyAddress,
+        title: job.title,
+        task_name: job.taskName,
+        category: job.category,
+        assigned_to: job.assignedTo,
+        status: job.status,
+        labour_hours: job.labourHours,
+        labour_rate: job.labourRate,
+        material_cost: job.materialCost,
+        invoice_status: job.invoiceStatus,
+      })
+      .eq("id", job.id);
+  }
+
+  async function changeMaintenanceProperty(propertyId) {
     const property = properties.find((p) => p.id === propertyId);
     if (!property || !selectedMaintenance) return;
 
-    setMaintenance((prev) =>
-      prev.map((job) =>
-        job.id === selectedMaintenanceId
-          ? { ...job, propertyId: property.id, propertyName: property.name, propertyAddress: property.address }
-          : job
-      )
-    );
-  };
+    const updatedJob = {
+      ...selectedMaintenance,
+      propertyId: property.id,
+      propertyName: property.name,
+      propertyAddress: property.address,
+    };
 
-  const applyPriceGuide = (taskName) => {
-    const guide = priceGuide.find((p) => p.task === taskName);
+    setMaintenance((prev) => prev.map((job) => (job.id === selectedMaintenanceId ? updatedJob : job)));
+
+    await supabase
+      .from("maintenance_jobs")
+      .update({
+        property_id: updatedJob.propertyId,
+        property_name: updatedJob.propertyName,
+        property_address: updatedJob.propertyAddress,
+      })
+      .eq("id", updatedJob.id);
+  }
+
+  async function applyPriceGuide(taskName) {
+    const guide = priceGuide.find((item) => item.task === taskName);
     if (!guide || !selectedMaintenance) return;
 
-    setMaintenance((prev) =>
-      prev.map((job) =>
-        job.id === selectedMaintenanceId
-          ? { ...job, taskName: guide.task, category: guide.category, labourRate: guide.hourlyRate }
-          : job
-      )
-    );
-  };
+    const updatedJob = {
+      ...selectedMaintenance,
+      taskName: guide.task,
+      category: guide.category,
+      labourRate: guide.hourlyRate,
+    };
 
-  const updateMaintenance = (field, value) => {
-    const numeric = ["labourHours", "labourRate", "materialCost"];
-    setMaintenance((prev) =>
-      prev.map((job) =>
-        job.id === selectedMaintenanceId
-          ? { ...job, [field]: numeric.includes(field) ? Number(value) : value }
-          : job
-      )
-    );
-  };
+    setMaintenance((prev) => prev.map((job) => (job.id === selectedMaintenanceId ? updatedJob : job)));
 
-  const createInvoice = () => {
+    await supabase
+      .from("maintenance_jobs")
+      .update({
+        task_name: updatedJob.taskName,
+        category: updatedJob.category,
+        labour_rate: updatedJob.labourRate,
+      })
+      .eq("id", updatedJob.id);
+  }
+
+  async function deleteMaintenanceJob(jobId) {
+    const job = maintenance.find((m) => m.id === jobId);
+
+    if (job?.invoiceStatus === "Billed") {
+      alert("Delete the invoice first before removing this maintenance job.");
+      return;
+    }
+
+    await supabase.from("maintenance_jobs").delete().eq("id", jobId);
+    setMaintenance((prev) => prev.filter((job) => job.id !== jobId));
+
+    if (selectedMaintenanceId === jobId) setSelectedMaintenanceId("");
+  }
+
+  async function createInvoice() {
     const property = properties.find((p) => p.id === invoiceForm.propertyId);
     if (!property || invoiceJobs.length === 0) return;
 
@@ -290,141 +390,113 @@ export default function App() {
       propertyId: property.id,
       propertyName: property.name,
       propertyAddress: property.address,
-      items: invoiceJobs.map((job) => ({
-        jobId: job.id,
-        title: job.title,
-        taskName: job.taskName,
-        labourHours: job.labourHours,
-        labourRate: job.labourRate,
-        labourCharge: calculateJobLabour(job),
-        materialCost: job.materialCost,
-        totalCost: calculateJobTotal(job),
-      })),
       labourSubtotal,
       materialsTotal,
       total: labourSubtotal + materialsTotal,
       status: "Draft",
     };
 
+    await supabase.from("invoices").insert({
+      id: invoice.id,
+      invoice_number: invoice.invoiceNumber,
+      invoice_date: invoice.invoiceDate,
+      due_date: invoice.dueDate,
+      property_id: invoice.propertyId,
+      property_name: invoice.propertyName,
+      property_address: invoice.propertyAddress,
+      labour_subtotal: invoice.labourSubtotal,
+      materials_total: invoice.materialsTotal,
+      total: invoice.total,
+      status: invoice.status,
+    });
+
+    const items = invoiceJobs.map((job) => ({
+      id: `ITEM-${job.id}-${Date.now()}`,
+      invoiceId: invoice.id,
+      jobId: job.id,
+      title: job.title,
+      taskName: job.taskName,
+      labourHours: job.labourHours,
+      labourRate: job.labourRate,
+      labourCharge: calculateJobLabour(job),
+      materialCost: job.materialCost,
+      totalCost: calculateJobTotal(job),
+    }));
+
+    await supabase.from("invoice_items").insert(
+      items.map((item) => ({
+        id: item.id,
+        invoice_id: item.invoiceId,
+        job_id: item.jobId,
+        title: item.title,
+        task_name: item.taskName,
+        labour_hours: item.labourHours,
+        labour_rate: item.labourRate,
+        labour_charge: item.labourCharge,
+        material_cost: item.materialCost,
+        total_cost: item.totalCost,
+      }))
+    );
+
+    const jobIds = invoiceJobs.map((job) => job.id);
+    await supabase.from("maintenance_jobs").update({ invoice_status: "Billed" }).in("id", jobIds);
+
     setInvoices((prev) => [invoice, ...prev]);
+    setInvoiceItems((prev) => [...items, ...prev]);
+    setMaintenance((prev) => prev.map((job) => (jobIds.includes(job.id) ? { ...job, invoiceStatus: "Billed" } : job)));
+
     setSelectedInvoiceId(invoice.id);
-
-    setMaintenance((prev) =>
-      prev.map((job) =>
-        invoiceJobs.some((i) => i.id === job.id) ? { ...job, invoiceStatus: "Billed" } : job
-      )
-    );
-
     setActiveTab("invoices");
-  };
+  }
 
-  const deleteInvoice = (invoiceId) => {
-    const invoice = invoices.find((i) => i.id === invoiceId);
-    if (!invoice) return;
+  async function deleteInvoice(invoiceId) {
+    const relatedItems = invoiceItems.filter((item) => item.invoiceId === invoiceId);
+    const jobIds = relatedItems.map((item) => item.jobId);
 
-    const jobIds = invoice.items.map((item) => item.jobId);
+    await supabase.from("invoice_items").delete().eq("invoice_id", invoiceId);
+    await supabase.from("invoices").delete().eq("id", invoiceId);
 
-    setMaintenance((prev) =>
-      prev.map((job) => (jobIds.includes(job.id) ? { ...job, invoiceStatus: "Pending" } : job))
-    );
+    if (jobIds.length > 0) {
+      await supabase.from("maintenance_jobs").update({ invoice_status: "Pending" }).in("id", jobIds);
+    }
 
-    setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
+    setInvoiceItems((prev) => prev.filter((item) => item.invoiceId !== invoiceId));
+    setInvoices((prev) => prev.filter((invoice) => invoice.id !== invoiceId));
+    setMaintenance((prev) => prev.map((job) => (jobIds.includes(job.id) ? { ...job, invoiceStatus: "Pending" } : job)));
     setSelectedInvoiceId("");
-  };
+  }
 
-  const updateInvoiceStatus = (invoiceId, status) => {
-    setInvoices((prev) => prev.map((i) => (i.id === invoiceId ? { ...i, status } : i)));
-  };
+  async function updateInvoiceStatus(invoiceId, status) {
+    await supabase.from("invoices").update({ status }).eq("id", invoiceId);
+    setInvoices((prev) => prev.map((invoice) => (invoice.id === invoiceId ? { ...invoice, status } : invoice)));
+  }
 
-  const addProperty = () => {
-    const id = `P-${String(properties.length + 1).padStart(3, "0")}`;
+  async function addProperty() {
     const property = {
-      id,
+      id: `P-${String(properties.length + 1).padStart(3, "0")}`,
       name: `New Property ${properties.length + 1}`,
       address: "Enter address",
       beds: 1,
       approvalLimit: 100,
     };
+
+    await supabase.from("properties").insert(propertyToDb(property));
     setProperties((prev) => [...prev, property]);
-    setSelectedPropertyId(id);
-  };
+    setSelectedPropertyId(property.id);
+  }
 
-  const updateProperty = (field, value) => {
+  async function updateProperty(field, value) {
     const numeric = ["beds", "approvalLimit"];
-    setProperties((prev) =>
-      prev.map((p) =>
-        p.id === selectedPropertyId ? { ...p, [field]: numeric.includes(field) ? Number(value) : value } : p
-      )
-    );
-  };
+    const updatedValue = numeric.includes(field) ? Number(value) : value;
 
-  const updateLinen = (field, value) => {
-    const numeric = [
-      "usableStock",
-      "inLaundry",
-      "incomingStock",
-      "avgWeeklyUsage",
-      "peakWeeklyUsage",
-      "supplierLeadDays",
-      "safetyStock",
-      "maxStockCap",
-      "damaged",
-      "missing",
-    ];
+    const updated = properties.map((p) => (p.id === selectedPropertyId ? { ...p, [field]: updatedValue } : p));
+    setProperties(updated);
 
-    setLinen((prev) =>
-      prev.map((l) =>
-        l.id === selectedLinenId ? { ...l, [field]: numeric.includes(field) ? Number(value) : value } : l
-      )
-    );
-  };
+    const property = updated.find((p) => p.id === selectedPropertyId);
+    if (property) await supabase.from("properties").update(propertyToDb(property)).eq("id", property.id);
+  }
 
-  const updateKey = (field, value) => {
-    setKeys((prev) => prev.map((k) => (k.id === selectedKeyId ? { ...k, [field]: value } : k)));
-  };
-
-  const addLinenItem = () => {
-    const property = properties[0];
-    const id = `LIN-${String(linen.length + 1).padStart(3, "0")}`;
-    const item = {
-      id,
-      propertyId: property.id,
-      propertyName: property.name,
-      item: "New Linen Item",
-      usableStock: 0,
-      inLaundry: 0,
-      incomingStock: 0,
-      avgWeeklyUsage: 0,
-      peakWeeklyUsage: 0,
-      supplierLeadDays: 5,
-      safetyStock: 1,
-      maxStockCap: 10,
-      damaged: 0,
-      missing: 0,
-    };
-
-    setLinen((prev) => [...prev, item]);
-    setSelectedLinenId(id);
-  };
-
-  const addKey = () => {
-    const property = properties[0];
-    const id = `KEY-${String(keys.length + 1).padStart(3, "0")}`;
-
-    setKeys((prev) => [
-      ...prev,
-      {
-        id,
-        propertyId: property.id,
-        propertyName: property.name,
-        type: "New Key",
-        status: "In Office",
-        holder: "Reception",
-      },
-    ]);
-
-    setSelectedKeyId(id);
-  };
+  if (loading) return <div className="loading-screen">Loading CRM...</div>;
 
   return (
     <div className="app-shell">
@@ -434,32 +506,17 @@ export default function App() {
           <p>STR Cost Control</p>
         </div>
 
-        {["dashboard", "linen", "maintenance", "invoices", "keys", "properties"].map((tab) => (
-          <button
-            key={tab}
-            className={activeTab === tab ? "nav-btn active" : "nav-btn"}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
+        <button type="button" className={activeTab === "dashboard" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+        <button type="button" className={activeTab === "maintenance" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveTab("maintenance")}>Maintenance</button>
+        <button type="button" className={activeTab === "invoices" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveTab("invoices")}>Invoices</button>
+        <button type="button" className={activeTab === "properties" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveTab("properties")}>Properties</button>
       </aside>
 
       <main className="main-content">
         <header className="topbar no-print">
           <div>
             <h1>Internal CRM Dashboard</h1>
-            <p>Premium operations control for maintenance, invoices, linen, keys and properties.</p>
-          </div>
-
-          <div className="topbar-card">
-            <label>Occupancy Pressure</label>
-            <select value={occupancyFactor} onChange={(e) => setOccupancyFactor(Number(e.target.value))}>
-              <option value={0.8}>Low</option>
-              <option value={1}>Normal</option>
-              <option value={1.2}>Busy</option>
-              <option value={1.4}>Peak</option>
-            </select>
+            <p>Premium operations control for maintenance, invoices and properties.</p>
           </div>
         </header>
 
@@ -469,45 +526,15 @@ export default function App() {
               <label>Filter invoices by month</label>
               <select value={dashboardMonthFilter} onChange={(e) => setDashboardMonthFilter(e.target.value)}>
                 {invoiceMonthOptions.map((month) => (
-                  <option key={month} value={month}>
-                    {formatMonth(month)}
-                  </option>
+                  <option key={month} value={month}>{formatMonth(month)}</option>
                 ))}
               </select>
             </div>
 
-            <section className="stats-grid six">
+            <section className="stats-grid">
               <StatCard title="Maintenance Charged" value={currency(dashboard.maintenanceCostsCharged)} />
               <StatCard title="Open Maintenance" value={dashboard.openMaintenance} />
-              <StatCard title="Critical Linen" value={dashboard.criticalLinen} />
-              <StatCard title="Reorder Soon" value={dashboard.reorderSoon} />
-              <StatCard title="Missing Keys" value={dashboard.missingKeys} />
-              <StatCard title="Invoices" value={dashboard.invoiceCount} />
-            </section>
-
-            <section className="content-grid">
-              <div className="panel wide">
-                <h3>Maintenance Charge Dashboard</h3>
-                <div className="metric-row">
-                  <span>Labour charged to properties</span>
-                  <strong>{currency(dashboard.maintenanceCostsCharged)}</strong>
-                </div>
-                <div className="metric-row">
-                  <span>Invoices generated</span>
-                  <strong>{dashboard.invoiceCount}</strong>
-                </div>
-                <div className="metric-row">
-                  <span>Open maintenance jobs</span>
-                  <strong>{dashboard.openMaintenance}</strong>
-                </div>
-              </div>
-
-              <div className="panel">
-                <h3>Invoice Source</h3>
-                <p className="muted">
-                  Invoices are created from completed maintenance jobs for the selected property. Dashboard totals count labour only.
-                </p>
-              </div>
+              <StatCard title="Invoices" value={dashboard.invoices} />
             </section>
           </>
         )}
@@ -523,37 +550,18 @@ export default function App() {
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr>
-                      <th>Job</th>
-                      <th>Property</th>
-                      <th>Task</th>
-                      <th>Status</th>
-                      <th>Total</th>
-                      <th>Action</th>
-                    </tr>
+                    <tr><th>Job</th><th>Property</th><th>Task</th><th>Status</th><th>Total</th><th>Action</th></tr>
                   </thead>
                   <tbody>
                     {maintenanceWithCost.map((job) => (
-                      <tr
-                        key={job.id}
-                        className={selectedMaintenanceId === job.id ? "selected-row" : ""}
-                        onClick={() => setSelectedMaintenanceId(job.id)}
-                      >
+                      <tr key={job.id} className={selectedMaintenanceId === job.id ? "selected-row" : ""} onClick={() => setSelectedMaintenanceId(job.id)}>
                         <td>{job.title}</td>
                         <td>{job.propertyName}</td>
                         <td>{job.taskName}</td>
                         <td>{job.status}</td>
                         <td>{currency(job.totalCost)}</td>
                         <td>
-                          <button
-                            className="mini-danger-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteMaintenanceJob(job.id);
-                            }}
-                          >
-                            Delete
-                          </button>
+                          <button className="mini-danger-btn" onClick={(e) => { e.stopPropagation(); deleteMaintenanceJob(job.id); }}>Delete</button>
                         </td>
                       </tr>
                     ))}
@@ -566,74 +574,51 @@ export default function App() {
               <h3>Edit Maintenance</h3>
 
               {selectedMaintenance ? (
-                <>
-                  <div className="form-grid">
-                    <Field label="Property">
-                      <select value={selectedMaintenance.propertyId} onChange={(e) => changeMaintenanceProperty(e.target.value)}>
-                        {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                    </Field>
+                <div className="form-grid">
+                  <Field label="Property">
+                    <select value={selectedMaintenance.propertyId} onChange={(e) => changeMaintenanceProperty(e.target.value)}>
+                      {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </Field>
 
-                    <Field label="Title">
-                      <input value={selectedMaintenance.title} onChange={(e) => updateMaintenance("title", e.target.value)} />
-                    </Field>
+                  <Field label="Title">
+                    <input value={selectedMaintenance.title} onChange={(e) => updateMaintenance("title", e.target.value)} />
+                  </Field>
 
-                    <Field label="Task">
-                      <select value={selectedMaintenance.taskName} onChange={(e) => applyPriceGuide(e.target.value)}>
-                        {priceGuide.map((p) => <option key={p.task} value={p.task}>{p.task}</option>)}
-                      </select>
-                    </Field>
+                  <Field label="Task">
+                    <select value={selectedMaintenance.taskName} onChange={(e) => applyPriceGuide(e.target.value)}>
+                      {priceGuide.map((p) => <option key={p.task} value={p.task}>{p.task}</option>)}
+                    </select>
+                  </Field>
 
-                    <Field label="Category">
-                      <input value={selectedMaintenance.category} readOnly />
-                    </Field>
+                  <Field label="Category">
+                    <input value={selectedMaintenance.category} readOnly />
+                  </Field>
 
-                    <Field label="Assigned To">
-                      <input value={selectedMaintenance.assignedTo} onChange={(e) => updateMaintenance("assignedTo", e.target.value)} />
-                    </Field>
+                  <Field label="Status">
+                    <select value={selectedMaintenance.status} onChange={(e) => updateMaintenance("status", e.target.value)}>
+                      <option>Open</option>
+                      <option>In Progress</option>
+                      <option>Completed</option>
+                    </select>
+                  </Field>
 
-                    <Field label="Status">
-                      <select value={selectedMaintenance.status} onChange={(e) => updateMaintenance("status", e.target.value)}>
-                        <option>Open</option>
-                        <option>In Progress</option>
-                        <option>Completed</option>
-                        <option>Needs Approval</option>
-                      </select>
-                    </Field>
+                  <Field label="Labour Hours">
+                    <input type="number" step="0.25" value={selectedMaintenance.labourHours} onChange={(e) => updateMaintenance("labourHours", e.target.value)} />
+                  </Field>
 
-                    <Field label="Labour Hours">
-                      <input type="number" step="0.25" value={selectedMaintenance.labourHours} onChange={(e) => updateMaintenance("labourHours", e.target.value)} />
-                    </Field>
+                  <Field label="Hourly Rate">
+                    <input value={selectedMaintenance.labourRate} readOnly />
+                  </Field>
 
-                    <Field label="Hourly Rate">
-                      <input value={selectedMaintenance.labourRate} readOnly />
-                    </Field>
+                  <Field label="Materials">
+                    <input type="number" value={selectedMaintenance.materialCost} onChange={(e) => updateMaintenance("materialCost", e.target.value)} />
+                  </Field>
 
-                    <Field label="Materials">
-                      <input type="number" value={selectedMaintenance.materialCost} onChange={(e) => updateMaintenance("materialCost", e.target.value)} />
-                    </Field>
-
-                    <Field label="Invoice Status">
-                      <select value={selectedMaintenance.invoiceStatus} onChange={(e) => updateMaintenance("invoiceStatus", e.target.value)}>
-                        <option>Not Started</option>
-                        <option>Pending</option>
-                        <option>Billed</option>
-                        <option>Paid</option>
-                      </select>
-                    </Field>
-                  </div>
-
-                  <div className="calc-box">
-                    <div className="metric-row">
-                      <span>Labour Charge</span>
-                      <strong>{currency(calculateJobLabour(selectedMaintenance))}</strong>
-                    </div>
-                    <div className="metric-row">
-                      <span>Total Job Cost</span>
-                      <strong>{currency(calculateJobTotal(selectedMaintenance))}</strong>
-                    </div>
-                  </div>
-                </>
+                  <Field label="Invoice Status">
+                    <input value={selectedMaintenance.invoiceStatus} readOnly />
+                  </Field>
+                </div>
               ) : (
                 <div className="empty-state">Add or select a maintenance job.</div>
               )}
@@ -651,52 +636,31 @@ export default function App() {
 
               <div className="form-grid">
                 <Field label="Property">
-                  <select
-                    value={invoiceForm.propertyId}
-                    onChange={(e) => setInvoiceForm((p) => ({ ...p, propertyId: e.target.value }))}
-                  >
+                  <select value={invoiceForm.propertyId} onChange={(e) => setInvoiceForm((p) => ({ ...p, propertyId: e.target.value }))}>
                     {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </Field>
 
                 <Field label="Invoice Date">
-                  <input
-                    type="date"
-                    value={invoiceForm.invoiceDate}
-                    onChange={(e) => setInvoiceForm((p) => ({ ...p, invoiceDate: e.target.value }))}
-                  />
+                  <input type="date" value={invoiceForm.invoiceDate} onChange={(e) => setInvoiceForm((p) => ({ ...p, invoiceDate: e.target.value }))} />
                 </Field>
 
                 <Field label="Due Date">
-                  <input
-                    type="date"
-                    value={invoiceForm.dueDate}
-                    onChange={(e) => setInvoiceForm((p) => ({ ...p, dueDate: e.target.value }))}
-                  />
+                  <input type="date" value={invoiceForm.dueDate} onChange={(e) => setInvoiceForm((p) => ({ ...p, dueDate: e.target.value }))} />
                 </Field>
               </div>
 
               <div className="calc-box">
-                <h4 className="subheading">Jobs Ready to Bill</h4>
+                <h4>Jobs Ready to Bill</h4>
                 <div className="table-wrap small">
                   <table>
-                    <thead>
-                      <tr>
-                        <th>Job</th>
-                        <th>Task</th>
-                        <th>Total</th>
-                      </tr>
-                    </thead>
+                    <thead><tr><th>Job</th><th>Task</th><th>Total</th></tr></thead>
                     <tbody>
                       {invoiceJobs.length === 0 ? (
-                        <tr><td colSpan="3">No completed jobs ready for this property.</td></tr>
+                        <tr><td colSpan="3">No completed jobs ready.</td></tr>
                       ) : (
                         invoiceJobs.map((job) => (
-                          <tr key={job.id}>
-                            <td>{job.title}</td>
-                            <td>{job.taskName}</td>
-                            <td>{currency(job.totalCost)}</td>
-                          </tr>
+                          <tr key={job.id}><td>{job.title}</td><td>{job.taskName}</td><td>{currency(job.totalCost)}</td></tr>
                         ))
                       )}
                     </tbody>
@@ -705,26 +669,14 @@ export default function App() {
               </div>
 
               <div className="calc-box">
-                <h4 className="subheading">Saved Invoices</h4>
+                <h4>Saved Invoices</h4>
                 <div className="table-wrap small">
                   <table>
-                    <thead>
-                      <tr>
-                        <th>Invoice</th>
-                        <th>Property</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
+                    <thead><tr><th>Invoice</th><th>Property</th><th>Status</th></tr></thead>
                     <tbody>
-                      {invoices.map((inv) => (
-                        <tr
-                          key={inv.id}
-                          className={selectedInvoiceId === inv.id ? "selected-row" : ""}
-                          onClick={() => setSelectedInvoiceId(inv.id)}
-                        >
-                          <td>{inv.invoiceNumber}</td>
-                          <td>{inv.propertyName}</td>
-                          <td>{inv.status}</td>
+                      {invoices.map((invoice) => (
+                        <tr key={invoice.id} className={selectedInvoiceId === invoice.id ? "selected-row" : ""} onClick={() => setSelectedInvoiceId(invoice.id)}>
+                          <td>{invoice.invoiceNumber}</td><td>{invoice.propertyName}</td><td>{invoice.status}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -734,15 +686,16 @@ export default function App() {
             </section>
 
             <section className="panel form-panel invoice-panel">
-              {selectedInvoice ? (
+              {selectedInvoiceWithItems ? (
                 <>
                   <div className="invoice-actions no-print">
-                    <select value={selectedInvoice.status} onChange={(e) => updateInvoiceStatus(selectedInvoice.id, e.target.value)}>
+                    <select value={selectedInvoiceWithItems.status} onChange={(e) => updateInvoiceStatus(selectedInvoiceWithItems.id, e.target.value)}>
                       <option>Draft</option>
                       <option>Sent</option>
                       <option>Paid</option>
                     </select>
-                    <button className="action-btn danger" onClick={() => deleteInvoice(selectedInvoice.id)}>Delete</button>
+
+                    <button className="action-btn danger" onClick={() => deleteInvoice(selectedInvoiceWithItems.id)}>Delete</button>
                     <button className="action-btn secondary" onClick={() => window.print()}>Print</button>
                   </div>
 
@@ -751,36 +704,27 @@ export default function App() {
                       <img src="/logo.png" alt="Logo" className="invoice-logo" />
                       <div className="invoice-meta">
                         <h2>Maintenance Invoice</h2>
-                        <div><strong>Invoice No:</strong> {selectedInvoice.invoiceNumber}</div>
-                        <div><strong>Date:</strong> {formatDate(selectedInvoice.invoiceDate)}</div>
-                        <div><strong>Due:</strong> {formatDate(selectedInvoice.dueDate)}</div>
-                        <div><strong>Status:</strong> {selectedInvoice.status}</div>
+                        <div><strong>Invoice No:</strong> {selectedInvoiceWithItems.invoiceNumber}</div>
+                        <div><strong>Date:</strong> {formatDate(selectedInvoiceWithItems.invoiceDate)}</div>
+                        <div><strong>Due:</strong> {formatDate(selectedInvoiceWithItems.dueDate)}</div>
+                        <div><strong>Status:</strong> {selectedInvoiceWithItems.status}</div>
                       </div>
                     </div>
 
                     <div className="bill-grid">
                       <div className="bill-to-box">
                         <div className="bill-label">Property</div>
-                        <strong>{selectedInvoice.propertyName}</strong>
-                        <div>{selectedInvoice.propertyAddress}</div>
+                        <strong>{selectedInvoiceWithItems.propertyName}</strong>
+                        <div>{selectedInvoiceWithItems.propertyAddress}</div>
                       </div>
                     </div>
 
                     <div className="table-wrap">
                       <table className="invoice-table">
-                        <thead>
-                          <tr>
-                            <th>Description</th>
-                            <th>Hours</th>
-                            <th>Rate</th>
-                            <th>Labour</th>
-                            <th>Materials</th>
-                            <th>Total</th>
-                          </tr>
-                        </thead>
+                        <thead><tr><th>Description</th><th>Hours</th><th>Rate</th><th>Labour</th><th>Materials</th><th>Total</th></tr></thead>
                         <tbody>
-                          {selectedInvoice.items.map((item) => (
-                            <tr key={item.jobId}>
+                          {selectedInvoiceWithItems.items.map((item) => (
+                            <tr key={item.id}>
                               <td>{item.title} - {item.taskName}</td>
                               <td>{item.labourHours}</td>
                               <td>{currency(item.labourRate)}</td>
@@ -794,18 +738,9 @@ export default function App() {
                     </div>
 
                     <div className="invoice-totals">
-                      <div className="metric-row">
-                        <span>Labour Subtotal</span>
-                        <strong>{currency(selectedInvoice.labourSubtotal)}</strong>
-                      </div>
-                      <div className="metric-row">
-                        <span>Materials Total</span>
-                        <strong>{currency(selectedInvoice.materialsTotal)}</strong>
-                      </div>
-                      <div className="metric-row total-line">
-                        <span>Grand Total</span>
-                        <strong>{currency(selectedInvoice.total)}</strong>
-                      </div>
+                      <div className="metric-row"><span>Labour Subtotal</span><strong>{currency(selectedInvoiceWithItems.labourSubtotal)}</strong></div>
+                      <div className="metric-row"><span>Materials Total</span><strong>{currency(selectedInvoiceWithItems.materialsTotal)}</strong></div>
+                      <div className="metric-row total-line"><span>Grand Total</span><strong>{currency(selectedInvoiceWithItems.total)}</strong></div>
                     </div>
 
                     <div className="invoice-notes">
@@ -821,137 +756,6 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === "linen" && (
-          <div className="editor-grid">
-            <section className="panel list-panel">
-              <div className="section-head">
-                <h3>Linen Lines</h3>
-                <button className="action-btn" onClick={addLinenItem}>Add Linen</button>
-              </div>
-
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Item</th>
-                      <th>Property</th>
-                      <th>Projected</th>
-                      <th>Suggested</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {linenWithMetrics.map((row) => (
-                      <tr
-                        key={row.id}
-                        className={selectedLinenId === row.id ? "selected-row" : ""}
-                        onClick={() => setSelectedLinenId(row.id)}
-                      >
-                        <td>{row.item}</td>
-                        <td>{row.propertyName}</td>
-                        <td>{row.projectedAvailable}</td>
-                        <td>{row.recommendedOrder}</td>
-                        <td>
-                          <span className={row.status === "Critical" ? "badge red" : row.status === "Reorder Soon" ? "badge amber" : "badge green"}>
-                            {row.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="panel form-panel">
-              <h3>Edit Linen</h3>
-              {selectedLinen && (
-                <div className="form-grid">
-                  {[
-                    "item",
-                    "usableStock",
-                    "inLaundry",
-                    "incomingStock",
-                    "avgWeeklyUsage",
-                    "peakWeeklyUsage",
-                    "supplierLeadDays",
-                    "safetyStock",
-                    "maxStockCap",
-                    "damaged",
-                    "missing",
-                  ].map((field) => (
-                    <Field key={field} label={field}>
-                      <input value={selectedLinen[field]} onChange={(e) => updateLinen(field, e.target.value)} />
-                    </Field>
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
-        )}
-
-        {activeTab === "keys" && (
-          <div className="editor-grid">
-            <section className="panel list-panel">
-              <div className="section-head">
-                <h3>Keys</h3>
-                <button className="action-btn" onClick={addKey}>Add Key</button>
-              </div>
-
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Key ID</th>
-                      <th>Property</th>
-                      <th>Status</th>
-                      <th>Holder</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {keys.map((key) => (
-                      <tr
-                        key={key.id}
-                        className={selectedKeyId === key.id ? "selected-row" : ""}
-                        onClick={() => setSelectedKeyId(key.id)}
-                      >
-                        <td>{key.id}</td>
-                        <td>{key.propertyName}</td>
-                        <td>{key.status}</td>
-                        <td>{key.holder}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="panel form-panel">
-              <h3>Edit Key</h3>
-              {selectedKey && (
-                <div className="form-grid">
-                  <Field label="Type">
-                    <input value={selectedKey.type} onChange={(e) => updateKey("type", e.target.value)} />
-                  </Field>
-
-                  <Field label="Status">
-                    <select value={selectedKey.status} onChange={(e) => updateKey("status", e.target.value)}>
-                      <option>In Office</option>
-                      <option>With Staff</option>
-                      <option>With Guest</option>
-                      <option>Missing</option>
-                    </select>
-                  </Field>
-
-                  <Field label="Holder">
-                    <input value={selectedKey.holder} onChange={(e) => updateKey("holder", e.target.value)} />
-                  </Field>
-                </div>
-              )}
-            </section>
-          </div>
-        )}
-
         {activeTab === "properties" && (
           <div className="editor-grid">
             <section className="panel list-panel">
@@ -962,23 +766,13 @@ export default function App() {
 
               <div className="table-wrap">
                 <table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Address</th>
-                      <th>Beds</th>
-                    </tr>
-                  </thead>
+                  <thead><tr><th>Name</th><th>Address</th><th>Beds</th></tr></thead>
                   <tbody>
-                    {properties.map((p) => (
-                      <tr
-                        key={p.id}
-                        className={selectedPropertyId === p.id ? "selected-row" : ""}
-                        onClick={() => setSelectedPropertyId(p.id)}
-                      >
-                        <td>{p.name}</td>
-                        <td>{p.address}</td>
-                        <td>{p.beds}</td>
+                    {properties.map((property) => (
+                      <tr key={property.id} className={selectedPropertyId === property.id ? "selected-row" : ""} onClick={() => setSelectedPropertyId(property.id)}>
+                        <td>{property.name}</td>
+                        <td>{property.address}</td>
+                        <td>{property.beds}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -988,21 +782,27 @@ export default function App() {
 
             <section className="panel form-panel">
               <h3>Edit Property</h3>
-              {selectedProperty && (
+
+              {selectedProperty ? (
                 <div className="form-grid">
                   <Field label="Name">
                     <input value={selectedProperty.name} onChange={(e) => updateProperty("name", e.target.value)} />
                   </Field>
+
                   <Field label="Address">
                     <input value={selectedProperty.address} onChange={(e) => updateProperty("address", e.target.value)} />
                   </Field>
+
                   <Field label="Beds">
                     <input type="number" value={selectedProperty.beds} onChange={(e) => updateProperty("beds", e.target.value)} />
                   </Field>
+
                   <Field label="Approval Limit">
                     <input type="number" value={selectedProperty.approvalLimit} onChange={(e) => updateProperty("approvalLimit", e.target.value)} />
                   </Field>
                 </div>
+              ) : (
+                <div className="empty-state">Select a property.</div>
               )}
             </section>
           </div>
