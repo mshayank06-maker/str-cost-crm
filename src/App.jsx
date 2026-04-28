@@ -967,7 +967,7 @@ export default function App() {
       </main>
     </div>
   );
-}
+
 
 function StatCard({ title, value }) {
   return (
