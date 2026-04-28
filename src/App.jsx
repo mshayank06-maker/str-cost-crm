@@ -653,6 +653,27 @@ async function loadData() {
     setLinen((prev) => prev.filter((item) => item.id !== id));
     if (selectedLinenId === id) setSelectedLinenId("");
   }
+  export default function App() {
+  // states here
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    // all await code here
+  }
+
+  // other functions here
+
+  if (loading) return <div className="loading-screen">Loading CRM...</div>;
+
+  return (
+    <div className="app-shell">
+      ...
+    </div>
+  );
+}
 
   if (loading) return <div className="loading-screen">Loading CRM...</div>;
 
