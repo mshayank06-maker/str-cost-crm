@@ -253,71 +253,6 @@ async function loadData() {
   }
 }
 
-    await supabase.from("properties").upsert(starterProperties.map(propertyToDb), { onConflict: "id" });
-    await supabase.from("linen_items").upsert(starterLinen.map(linenToDb), { onConflict: "id" });
-
-    const [propertiesRes, linenRes, maintenanceRes, invoicesRes, invoiceItemsRes] = await Promise.all([
-      supabase.from("properties").select("*").order("id"),
-      supabase.from("linen_items").select("*").order("id"),
-      supabase.from("maintenance_jobs").select("*").order("created_at", { ascending: false }),
-      supabase.from("invoices").select("*").order("created_at", { ascending: false }),
-      supabase.from("invoice_items").select("*"),
-    ]);
-
-    setProperties(propertiesRes.error ? starterProperties : (propertiesRes.data || []).map(propertyFromDb));
-    setLinen(linenRes.error ? starterLinen : (linenRes.data || []).map(linenFromDb));
-
-    setMaintenance(
-      (maintenanceRes.data || []).map((job) => ({
-        id: job.id,
-        propertyId: job.property_id,
-        propertyName: job.property_name,
-        propertyAddress: job.property_address,
-        title: job.title,
-        taskName: job.task_name,
-        category: job.category,
-        assignedTo: job.assigned_to,
-        status: job.status,
-        labourHours: Number(job.labour_hours || 0),
-        labourRate: Number(job.labour_rate || 0),
-        materialCost: Number(job.material_cost || 0),
-        invoiceStatus: job.invoice_status,
-      }))
-    );
-
-    setInvoices(
-      (invoicesRes.data || []).map((inv) => ({
-        id: inv.id,
-        invoiceNumber: inv.invoice_number,
-        invoiceDate: inv.invoice_date,
-        dueDate: inv.due_date,
-        propertyId: inv.property_id,
-        propertyName: inv.property_name,
-        propertyAddress: inv.property_address,
-        labourSubtotal: Number(inv.labour_subtotal || 0),
-        materialsTotal: Number(inv.materials_total || 0),
-        total: Number(inv.total || 0),
-        status: inv.status,
-      }))
-    );
-
-    setInvoiceItems(
-      (invoiceItemsRes.data || []).map((item) => ({
-        id: item.id,
-        invoiceId: item.invoice_id,
-        jobId: item.job_id,
-        title: item.title,
-        taskName: item.task_name,
-        labourHours: Number(item.labour_hours || 0),
-        labourRate: Number(item.labour_rate || 0),
-        labourCharge: Number(item.labour_charge || 0),
-        materialCost: Number(item.material_cost || 0),
-        totalCost: Number(item.total_cost || 0),
-      }))
-    );
-
-    setLoading(false);
-  }
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId) || properties[0];
   const selectedLinen = linen.find((l) => l.id === selectedLinenId) || null;
@@ -653,28 +588,6 @@ async function loadData() {
     setLinen((prev) => prev.filter((item) => item.id !== id));
     if (selectedLinenId === id) setSelectedLinenId("");
   }
-  export default function App() {
-  // states here
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  async function loadData() {
-    // all await code here
-  }
-
-  // other functions here
-
-  if (loading) return <div className="loading-screen">Loading CRM...</div>;
-
-  return (
-    <div className="app-shell">
-      ...
-    </div>
-  );
-}
-
   if (loading) return <div className="loading-screen">Loading CRM...</div>;
 
   return (
@@ -990,6 +903,7 @@ async function loadData() {
   );
 
 
+}
 function StatCard({ title, value }) {
   return (
     <div className="stat-card">
