@@ -176,7 +176,7 @@ export default function App() {
     loadData();
   }, []);
 
- async function loadData() {
+async function loadData() {
   try {
     setLoading(true);
 
