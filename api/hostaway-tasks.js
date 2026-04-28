@@ -3,11 +3,11 @@ import { createClient } from "@supabase/supabase-js";
 export default async function handler(req, res) {
   try {
     const supabase = createClient(
-      process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
     );
 
-    // 1. Get token
+    // 1. GET TOKEN
     const tokenRes = await fetch("https://api.hostaway.com/v1/accessTokens", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ step: "token_error", error: tokenData });
     }
 
-    // 2. Fetch tasks
+    // 2. FETCH TASKS
     const tasksRes = await fetch("https://api.hostaway.com/v1/tasks", {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     const tasksData = await tasksRes.json();
     const tasks = tasksData.result || [];
 
-    // 3. Fetch listings (for property names)
+    // 3. FETCH LISTINGS
     const listingsRes = await fetch("https://api.hostaway.com/v1/listings", {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
@@ -46,148 +46,69 @@ export default async function handler(req, res) {
       listingMap[l.id] = l.name;
     });
 
-    // 4. Filter completed tasks
+    // 4. FETCH YOUR CRM PROPERTIES
+    const { data: properties } = await supabase
+      .from("properties")
+      .select("*");
+
+    // 5. FILTER COMPLETED TASKS
     const completedTasks = tasks.filter((task) =>
       ["completed", "done"].includes(
         String(task.status || "").trim().toLowerCase()
       )
     );
 
-    // 5. Map tasks correctly (FIXED)
+    // 6. MAP TASKS
     const rows = completedTasks.map((task) => {
-        // 4. Fetch YOUR CRM properties
-const { data: properties } = await supabase
-  .from("properties")
-  .select("*");
+      const description = task.description || "";
+      const title = task.title || "";
 
-// 5. Map tasks correctly (FIXED + PROPERTY MATCHING)
-const rows = completedTasks.map((task) => {
-    // 4. Fetch YOUR CRM properties
-const { data: properties } = await supabase
-  .from("properties")
-  .select("*");
-
-// 5. Map tasks correctly (FIXED + PROPERTY MATCHING)
-const rows = completedTasks.map((task) => {
-  const details = extractDetails(task.description || "");
-  const labourType = detectLabourType(
-    task.title || "",
-    task.description || ""
-  );
-  const rate = getLabourRate(labourType);
-
-  const hostawayName = listingMap[task.listingMapId] || "";
-
-  // 🔥 Match to your CRM property
-  const matchedProperty =
-    properties?.find((p) =>
-      hostawayName.toLowerCase().includes(p.name.toLowerCase())
-    ) || null;
-
-  return {
-    id: `HA-${task.id}`,
-    external_id: String(task.id),
-
-    // ✅ USE YOUR CRM PROPERTY
-    property_id: matchedProperty
-      ? matchedProperty.id
-      : String(task.listingMapId || ""),
-
-    property_name: matchedProperty
-      ? matchedProperty.name
-      : hostawayName,
-
-    property_address: matchedProperty
-      ? matchedProperty.address
-      : "",
-
-    title: task.title || "Hostaway Maintenance Task",
-    description: task.description || "",
-    task_name: labourType,
-    category: labourType,
-    assigned_to: "Hostaway",
-    status: "Completed",
-
-    labour_hours: details.labourHours,
-    labour_rate: rate,
-    material_cost: details.materialCost,
-
-    invoice_status: "Not Started",
-  };
-});
-  const details = extractDetails(task.description || "");
-  const labourType = detectLabourType(
-    task.title || "",
-    task.description || ""
-  );
-  const rate = getLabourRate(labourType);
-
-  const hostawayName = listingMap[task.listingMapId] || "";
-
-  // 🔥 Match to your CRM property
-  const matchedProperty =
-    properties?.find((p) =>
-      hostawayName.toLowerCase().includes(p.name.toLowerCase())
-    ) || null;
-
-  return {
-    id: `HA-${task.id}`,
-    external_id: String(task.id),
-
-    // ✅ USE YOUR CRM PROPERTY
-    property_id: matchedProperty
-      ? matchedProperty.id
-      : String(task.listingMapId || ""),
-
-    property_name: matchedProperty
-      ? matchedProperty.name
-      : hostawayName,
-
-    property_address: matchedProperty
-      ? matchedProperty.address
-      : "",
-
-    title: task.title || "Hostaway Maintenance Task",
-    description: task.description || "",
-    task_name: labourType,
-    category: labourType,
-    assigned_to: "Hostaway",
-    status: "Completed",
-
-    labour_hours: details.labourHours,
-    labour_rate: rate,
-    material_cost: details.materialCost,
-
-    invoice_status: "Not Started",
-  };
-});
-      const details = extractDetails(task.description || "");
-      const labourType = detectLabourType(
-        task.title || "",
-        task.description || ""
-      );
+      const details = extractDetails(description);
+      const labourType = detectLabourType(title, description);
       const rate = getLabourRate(labourType);
+
+      const hostawayName = listingMap[task.listingMapId] || "";
+
+      // 🔥 MATCH PROPERTY
+      const matchedProperty =
+        properties?.find((p) =>
+          hostawayName.toLowerCase().includes(p.name.toLowerCase())
+        ) || null;
 
       return {
         id: `HA-${task.id}`,
         external_id: String(task.id),
-        property_id: String(task.listingMapId || ""),
-       
-        property_address: "",
-        title: task.title || "Hostaway Maintenance Task",
-        description: task.description || "",
+
+        property_id: matchedProperty
+          ? matchedProperty.id
+          : String(task.listingMapId || ""),
+
+        property_name: matchedProperty
+          ? matchedProperty.name
+          : hostawayName,
+
+        property_address: matchedProperty
+          ? matchedProperty.address
+          : "",
+
+        title: title || "Hostaway Task",
+        description: description,
+
         task_name: labourType,
         category: labourType,
+
         assigned_to: "Hostaway",
         status: "Completed",
+
         labour_hours: details.labourHours,
         labour_rate: rate,
         material_cost: details.materialCost,
+
         invoice_status: "Not Started",
       };
     });
 
-    // 6. Insert into Supabase
+    // 7. INSERT INTO SUPABASE
     const { error } = await supabase
       .from("maintenance_jobs")
       .upsert(rows, { onConflict: "id" });
@@ -200,7 +121,7 @@ const rows = completedTasks.map((task) => {
     }
 
     return res.status(200).json({
-      message: "Hostaway completed tasks synced",
+      message: "Hostaway sync complete",
       total_tasks: tasks.length,
       completed_tasks: completedTasks.length,
       inserted_or_updated: rows.length,
@@ -216,7 +137,7 @@ const rows = completedTasks.map((task) => {
 /* ---------------- HELPERS ---------------- */
 
 function extractDetails(description = "") {
-  const text = String(description).toLowerCase();
+  const text = description.toLowerCase();
 
   const hoursMatch = text.match(/(\d+(\.\d+)?)\s*(hour|hours|hr|hrs)/);
   const labourHours = hoursMatch ? Number(hoursMatch[1]) : 1;
