@@ -176,8 +176,82 @@ export default function App() {
     loadData();
   }, []);
 
-  async function loadData() {
+ async function loadData() {
+  try {
     setLoading(true);
+
+    await supabase.from("properties").upsert(starterProperties.map(propertyToDb), { onConflict: "id" });
+    await supabase.from("linen_items").upsert(starterLinen.map(linenToDb), { onConflict: "id" });
+
+    const [propertiesRes, linenRes, maintenanceRes, invoicesRes, invoiceItemsRes] = await Promise.all([
+      supabase.from("properties").select("*").order("id"),
+      supabase.from("linen_items").select("*").order("id"),
+      supabase.from("maintenance_jobs").select("*").order("created_at", { ascending: false }),
+      supabase.from("invoices").select("*").order("created_at", { ascending: false }),
+      supabase.from("invoice_items").select("*"),
+    ]);
+
+    if (propertiesRes.error) console.error("Properties error:", propertiesRes.error);
+    if (linenRes.error) console.error("Linen error:", linenRes.error);
+    if (maintenanceRes.error) console.error("Maintenance error:", maintenanceRes.error);
+    if (invoicesRes.error) console.error("Invoices error:", invoicesRes.error);
+    if (invoiceItemsRes.error) console.error("Invoice items error:", invoiceItemsRes.error);
+
+    setProperties((propertiesRes.data || []).map(propertyFromDb));
+    setLinen((linenRes.data || []).map(linenFromDb));
+
+    setMaintenance(
+      (maintenanceRes.data || []).map((job) => ({
+        id: job.id,
+        propertyId: job.property_id,
+        propertyName: job.property_name,
+        propertyAddress: job.property_address,
+        title: job.title,
+        taskName: job.task_name || "Hostaway Task",
+        category: job.category || "Maintenance",
+        assignedTo: job.assigned_to || "Hostaway",
+        status: job.status || "Completed",
+        labourHours: Number(job.labour_hours || 1),
+        labourRate: Number(job.labour_rate || 0),
+        materialCost: Number(job.material_cost || 0),
+        invoiceStatus: job.invoice_status || "Not Started",
+      }))
+    );
+
+    setInvoices((invoicesRes.data || []).map((inv) => ({
+      id: inv.id,
+      invoiceNumber: inv.invoice_number,
+      invoiceDate: inv.invoice_date,
+      dueDate: inv.due_date,
+      propertyId: inv.property_id,
+      propertyName: inv.property_name,
+      propertyAddress: inv.property_address,
+      labourSubtotal: Number(inv.labour_subtotal || 0),
+      materialsTotal: Number(inv.materials_total || 0),
+      total: Number(inv.total || 0),
+      status: inv.status,
+    })));
+
+    setInvoiceItems((invoiceItemsRes.data || []).map((item) => ({
+      id: item.id,
+      invoiceId: item.invoice_id,
+      jobId: item.job_id,
+      title: item.title,
+      taskName: item.task_name,
+      labourHours: Number(item.labour_hours || 0),
+      labourRate: Number(item.labour_rate || 0),
+      labourCharge: Number(item.labour_charge || 0),
+      materialCost: Number(item.material_cost || 0),
+      totalCost: Number(item.total_cost || 0),
+    })));
+
+  } catch (error) {
+    console.error("CRM loading error:", error);
+    alert("CRM loading error: " + error.message);
+  } finally {
+    setLoading(false);
+  }
+}
 
     await supabase.from("properties").upsert(starterProperties.map(propertyToDb), { onConflict: "id" });
     await supabase.from("linen_items").upsert(starterLinen.map(linenToDb), { onConflict: "id" });
