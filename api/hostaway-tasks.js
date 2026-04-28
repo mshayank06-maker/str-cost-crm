@@ -49,7 +49,7 @@ export default async function handler(req, res) {
 
     // Hostaway completed tasks are called "done"
     const doneTasks = tasks.filter((task) => {
-      return String(task.status || "").trim().toLowerCase() === "done";
+      return String(task.status || "").trim().toLowerCase() === "Completed";
     });
 
     const rows = doneTasks.map((task) => ({
@@ -60,7 +60,7 @@ export default async function handler(req, res) {
       property_address: "",
       title: task.title || "Hostaway Maintenance Task",
       description: task.description || "",
-      task_name: "Hostaway Done Task",
+      task_name: "Hostaway Completed Task",
       category: "Maintenance",
       assigned_to: "Hostaway",
       status: "Completed",
