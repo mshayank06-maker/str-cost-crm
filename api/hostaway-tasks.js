@@ -7,6 +7,22 @@ export default async function handler(req, res) {
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
 
+    const hostawayAccountId = Number(process.env.HOSTAWAY_ACCOUNT_ID);
+
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(500).json({
+        step: "env_error",
+        error: "Missing Supabase environment variables.",
+      });
+    }
+
+    if (!process.env.HOSTAWAY_ACCOUNT_ID || !process.env.HOSTAWAY_API_KEY) {
+      return res.status(500).json({
+        step: "env_error",
+        error: "Missing Hostaway environment variables.",
+      });
+    }
+
     // 1. GET HOSTAWAY TOKEN
     const tokenRes = await fetch("https://api.hostaway.com/v1/accessTokens", {
       method: "POST",
@@ -28,24 +44,42 @@ export default async function handler(req, res) {
       });
     }
 
+    const hostawayToken = tokenData.access_token;
+
     // 2. FETCH HOSTAWAY TASKS
     const tasksRes = await fetch("https://api.hostaway.com/v1/tasks", {
       headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
+        Authorization: `Bearer ${hostawayToken}`,
       },
     });
 
     const tasksData = await tasksRes.json();
+
+    if (!tasksRes.ok) {
+      return res.status(500).json({
+        step: "hostaway_tasks_error",
+        error: tasksData,
+      });
+    }
+
     const tasks = tasksData.result || [];
 
     // 3. FETCH HOSTAWAY LISTINGS
     const listingsRes = await fetch("https://api.hostaway.com/v1/listings", {
       headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
+        Authorization: `Bearer ${hostawayToken}`,
       },
     });
 
     const listingsData = await listingsRes.json();
+
+    if (!listingsRes.ok) {
+      return res.status(500).json({
+        step: "hostaway_listings_error",
+        error: listingsData,
+      });
+    }
+
     const listings = listingsData.result || [];
 
     const listingMap = {};
@@ -78,12 +112,12 @@ export default async function handler(req, res) {
     }
 
     const mapByHostawayId = {};
-    propertyMap.forEach((row) => {
+    (propertyMap || []).forEach((row) => {
       mapByHostawayId[String(row.hostaway_listing_id)] = row.property_id;
     });
 
     const propertiesById = {};
-    properties.forEach((property) => {
+    (properties || []).forEach((property) => {
       propertiesById[String(property.id)] = property;
     });
 
@@ -176,9 +210,11 @@ export default async function handler(req, res) {
       };
 
       return {
+        rawTask: task,
         row,
         autoInvoiceReady:
           Boolean(matchedProperty) &&
+          Boolean(hostawayListingId) &&
           parsedDetails.hasLabourHours &&
           parsedDetails.hasJobDone &&
           parsedDetails.hasMaterialCost,
@@ -209,7 +245,9 @@ export default async function handler(req, res) {
     const { data: existingInvoices, error: existingInvoicesError } =
       await supabase
         .from("invoices")
-        .select("job_id")
+        .select(
+          "id, job_id, invoice_number, hostaway_expense_id, hostaway_expense_status"
+        )
         .in("job_id", jobIds.length ? jobIds : ["__none__"]);
 
     if (existingInvoicesError) {
@@ -250,7 +288,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 11. AUTO-CREATE INVOICES
+    // 11. AUTO-CREATE CRM INVOICES
     // This only invoices tasks that use the exact maintenance description format:
     // Labour Hours:
     // What job was done:
@@ -280,8 +318,9 @@ export default async function handler(req, res) {
         const invoiceNumber = makeInvoiceNumber(nextInvoiceSequence);
         nextInvoiceSequence += 1;
 
-        const invoiceId = `INVREC-${Date.now()}-${job.id}`;
-        const itemId = `ITEM-${job.id}-${Date.now()}`;
+        const timestamp = Date.now();
+        const invoiceId = `INVREC-${timestamp}-${job.id}`;
+        const itemId = `ITEM-${job.id}-${timestamp}`;
 
         const invoiceDate = todayISO();
         const dueDate = todayISO();
@@ -308,6 +347,9 @@ export default async function handler(req, res) {
           total: total,
           status: "Draft",
           notes: "Paid in full, thank you",
+          hostaway_expense_status: "Pending",
+          hostaway_expense_id: null,
+          hostaway_expense_error: null,
         });
 
         createdInvoiceItems.push({
@@ -369,6 +411,118 @@ export default async function handler(req, res) {
       }
     }
 
+    // 12. CREATE HOSTAWAY EXPENSES FOR NEW CRM INVOICES
+    const hostawayExpenseResults = [];
+
+    for (const invoice of createdInvoices) {
+      const job = autoInvoiceCandidates.find((j) => j.id === invoice.job_id);
+
+      if (!job) {
+        continue;
+      }
+
+      if (!job.hostaway_listing_id) {
+        hostawayExpenseResults.push({
+          invoice_number: invoice.invoice_number,
+          job_id: invoice.job_id,
+          status: "Skipped",
+          error: "Missing Hostaway listingMapId.",
+        });
+
+        await updateInvoiceExpenseStatus(supabase, invoice.id, {
+          status: "Skipped",
+          error: "Missing Hostaway listingMapId.",
+        });
+
+        continue;
+      }
+
+      const expenseDate = job.completed_at
+        ? String(job.completed_at).slice(0, 10)
+        : todayISO();
+
+      const concept = makeHostawayExpenseConcept({
+        invoiceNumber: invoice.invoice_number,
+        jobTitle: job.title,
+        jobDone: job.job_done,
+        taskName: job.task_name,
+      });
+
+      const amount = -Math.abs(Number(invoice.total || 0));
+
+      if (!amount || Number.isNaN(amount)) {
+        hostawayExpenseResults.push({
+          invoice_number: invoice.invoice_number,
+          job_id: invoice.job_id,
+          status: "Skipped",
+          error: "Invoice total is zero or invalid.",
+        });
+
+        await updateInvoiceExpenseStatus(supabase, invoice.id, {
+          status: "Skipped",
+          error: "Invoice total is zero or invalid.",
+        });
+
+        continue;
+      }
+
+      const expensePayload = {
+        accountId: hostawayAccountId,
+        ownerStatementId: null,
+        listingMapId: Number(job.hostaway_listing_id),
+        reservationId: null,
+        expenseDate,
+        concept,
+        amount,
+        isDeleted: 0,
+        ownerUserId: null,
+        ownerStatementIds: [],
+        categories: [],
+        categoriesNames: ["Maintenance"],
+        attachments: [],
+      };
+
+      const expenseResult = await createHostawayExpense({
+        token: hostawayToken,
+        payload: expensePayload,
+      });
+
+      if (expenseResult.ok) {
+        const expenseId = String(expenseResult.data?.result?.id || "");
+
+        await updateInvoiceExpenseStatus(supabase, invoice.id, {
+          status: "Created",
+          expenseId,
+          error: null,
+        });
+
+        hostawayExpenseResults.push({
+          invoice_number: invoice.invoice_number,
+          job_id: invoice.job_id,
+          status: "Created",
+          hostaway_expense_id: expenseId,
+          amount,
+          listingMapId: Number(job.hostaway_listing_id),
+        });
+      } else {
+        await updateInvoiceExpenseStatus(supabase, invoice.id, {
+          status: "Failed",
+          error: JSON.stringify(expenseResult.data || expenseResult.error),
+        });
+
+        hostawayExpenseResults.push({
+          invoice_number: invoice.invoice_number,
+          job_id: invoice.job_id,
+          status: "Failed",
+          error: expenseResult.data || expenseResult.error,
+          payload: expensePayload,
+        });
+      }
+
+      // Hostaway has API rate limits, so do not hammer it with many expense posts at once.
+      await sleep(700);
+    }
+
     return res.status(200).json({
       message: "Hostaway sync complete",
       total_tasks: tasks.length,
@@ -378,6 +532,13 @@ export default async function handler(req, res) {
       unmapped_jobs: rows.filter((r) => !r.crm_property_id).length,
       auto_invoice_candidates: autoInvoiceCandidates.length,
       auto_invoices_created: createdInvoices.length,
+      hostaway_expenses_attempted: hostawayExpenseResults.length,
+      hostaway_expenses_created: hostawayExpenseResults.filter(
+        (r) => r.status === "Created"
+      ).length,
+      hostaway_expenses_failed: hostawayExpenseResults.filter(
+        (r) => r.status === "Failed"
+      ).length,
       sample_rows: rows.slice(0, 5).map((r) => ({
         id: r.id,
         hostaway_listing_id: r.hostaway_listing_id,
@@ -398,7 +559,9 @@ export default async function handler(req, res) {
         job_id: invoice.job_id,
         property_name: invoice.property_name,
         total: invoice.total,
+        hostaway_expense_status: invoice.hostaway_expense_status,
       })),
+      sample_hostaway_expenses: hostawayExpenseResults.slice(0, 5),
     });
   } catch (error) {
     return res.status(500).json({
@@ -522,4 +685,74 @@ async function getNextInvoiceSequence(supabase) {
   const highest = numbers.length ? Math.max(...numbers) : 0;
 
   return highest + 1;
+}
+
+function makeHostawayExpenseConcept({
+  invoiceNumber,
+  jobTitle,
+  jobDone,
+  taskName,
+}) {
+  const cleanJob =
+    String(jobDone || taskName || jobTitle || "Maintenance")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160) || "Maintenance";
+
+  return `Maintenance - ${cleanJob} (${invoiceNumber})`.slice(0, 255);
+}
+
+async function createHostawayExpense({ token, payload }) {
+  try {
+    const response = await fetch("https://api.hostaway.com/v1/expenses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || data?.status === "fail") {
+      return {
+        ok: false,
+        status: response.status,
+        data,
+      };
+    }
+
+    return {
+      ok: true,
+      status: response.status,
+      data,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message,
+    };
+  }
+}
+
+async function updateInvoiceExpenseStatus(
+  supabase,
+  invoiceId,
+  { status, expenseId = null, error = null }
+) {
+  const update = {
+    hostaway_expense_status: status,
+    hostaway_expense_error: error,
+  };
+
+  if (expenseId) {
+    update.hostaway_expense_id = expenseId;
+  }
+
+  await supabase.from("invoices").update(update).eq("id", invoiceId);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
