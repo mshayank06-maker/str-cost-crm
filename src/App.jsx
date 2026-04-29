@@ -180,6 +180,7 @@ export default function App() {
   const [selectedMaintenanceId, setSelectedMaintenanceId] = useState("");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [dashboardMonthFilter, setDashboardMonthFilter] = useState("all");
+  const [maintenanceMonthFilter, setMaintenanceMonthFilter] = useState("all");
 
   const [invoiceForm, setInvoiceForm] = useState({
     invoiceDate: todayISO(),
@@ -242,6 +243,7 @@ export default function App() {
 
           return {
             id: job.id,
+            createdAt: job.created_at || "",
             externalId: job.external_id || "",
 
             propertyId: matchedProperty ? matchedProperty.id : "",
@@ -360,6 +362,22 @@ export default function App() {
     return ["all", ...Array.from(new Set(months))];
   }, [invoices]);
 
+  const maintenanceMonthOptions = useMemo(() => {
+    const months = maintenanceWithCost
+      .map((job) => job.createdAt?.slice(0, 7))
+      .filter(Boolean);
+
+    return ["all", ...Array.from(new Set(months))];
+  }, [maintenanceWithCost]);
+
+  const filteredMaintenanceJobs = useMemo(() => {
+    if (maintenanceMonthFilter === "all") return maintenanceWithCost;
+
+    return maintenanceWithCost.filter(
+      (job) => job.createdAt?.slice(0, 7) === maintenanceMonthFilter
+    );
+  }, [maintenanceWithCost, maintenanceMonthFilter]);
+
   const filteredDashboardInvoices = useMemo(() => {
     if (dashboardMonthFilter === "all") return invoices;
 
@@ -390,6 +408,7 @@ export default function App() {
 
     const job = {
       id: `JOB-${Date.now()}`,
+      createdAt: new Date().toISOString(),
       externalId: "",
       propertyId: property.id,
       crmPropertyId: property.id,
@@ -1080,6 +1099,20 @@ export default function App() {
                 </button>
               </div>
 
+              <div className="dashboard-filter-card">
+                <label>Filter maintenance by month</label>
+                <select
+                  value={maintenanceMonthFilter}
+                  onChange={(e) => setMaintenanceMonthFilter(e.target.value)}
+                >
+                  {maintenanceMonthOptions.map((month) => (
+                    <option key={month} value={month}>
+                      {formatMonth(month)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -1095,49 +1128,55 @@ export default function App() {
                   </thead>
 
                   <tbody>
-                    {maintenanceWithCost.map((job) => (
-                      <tr
-                        key={job.id}
-                        className={
-                          selectedMaintenanceId === job.id ? "selected-row" : ""
-                        }
-                        onClick={() => setSelectedMaintenanceId(job.id)}
-                      >
-                        <td>{job.title}</td>
-                        <td>{job.propertyName || "Unmapped Property"}</td>
-                        <td>{job.taskName}</td>
-                        <td>{job.status}</td>
-                        <td>{money(job.totalCost)}</td>
-                        <td>
-                          {job.status === "Completed" && job.invoiceStatus !== "Billed" ? (
+                    {filteredMaintenanceJobs.length === 0 ? (
+                      <tr>
+                        <td colSpan="7">No maintenance jobs found for this month.</td>
+                      </tr>
+                    ) : (
+                      filteredMaintenanceJobs.map((job) => (
+                        <tr
+                          key={job.id}
+                          className={
+                            selectedMaintenanceId === job.id ? "selected-row" : ""
+                          }
+                          onClick={() => setSelectedMaintenanceId(job.id)}
+                        >
+                          <td>{job.title}</td>
+                          <td>{job.propertyName || "Unmapped Property"}</td>
+                          <td>{job.taskName}</td>
+                          <td>{job.status}</td>
+                          <td>{money(job.totalCost)}</td>
+                          <td>
+                            {job.status === "Completed" && job.invoiceStatus !== "Billed" ? (
+                              <button
+                                className="mini-action-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  createInvoiceForJob(job);
+                                }}
+                              >
+                                Invoice
+                              </button>
+                            ) : (
+                              <span className="badge healthy">
+                                {job.invoiceStatus || "Not Started"}
+                              </span>
+                            )}
+                          </td>
+                          <td>
                             <button
-                              className="mini-action-btn"
+                              className="mini-danger-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                createInvoiceForJob(job);
+                                deleteMaintenanceJob(job.id);
                               }}
                             >
-                              Invoice
+                              Delete
                             </button>
-                          ) : (
-                            <span className="badge healthy">
-                              {job.invoiceStatus || "Not Started"}
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <button
-                            className="mini-danger-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteMaintenanceJob(job.id);
-                            }}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
