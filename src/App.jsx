@@ -166,6 +166,9 @@ function generateInvoiceNumber(invoices) {
 }
 
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
 
@@ -189,7 +192,36 @@ export default function App() {
   });
 
   useEffect(() => {
-    loadData();
+    async function checkSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      setSession(session);
+      setAuthLoading(false);
+
+      if (session) {
+        loadData();
+      } else {
+        setLoading(false);
+      }
+    }
+
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+
+      if (session) {
+        loadData();
+      } else {
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   async function loadData() {
@@ -213,8 +245,9 @@ export default function App() {
       ] = await Promise.all([
         supabase.from("properties").select("*").order("id"),
         supabase.from("linen_items").select("*").order("id"),
-        supabase.from("maintenance_jobs").select("*").order("created_at", {
+        supabase.from("maintenance_jobs").select("*").order("completed_at", {
           ascending: false,
+          nullsFirst: false,
         }),
         supabase.from("invoices").select("*").order("created_at", {
           ascending: false,
@@ -244,6 +277,7 @@ export default function App() {
           return {
             id: job.id,
             createdAt: job.created_at || "",
+            completedAt: job.completed_at || job.created_at || "",
             externalId: job.external_id || "",
 
             propertyId: matchedProperty ? matchedProperty.id : "",
@@ -364,7 +398,7 @@ export default function App() {
 
   const maintenanceMonthOptions = useMemo(() => {
     const months = maintenanceWithCost
-      .map((job) => job.createdAt?.slice(0, 7))
+      .map((job) => job.completedAt?.slice(0, 7))
       .filter(Boolean);
 
     return ["all", ...Array.from(new Set(months))];
@@ -374,7 +408,7 @@ export default function App() {
     if (maintenanceMonthFilter === "all") return maintenanceWithCost;
 
     return maintenanceWithCost.filter(
-      (job) => job.createdAt?.slice(0, 7) === maintenanceMonthFilter
+      (job) => job.completedAt?.slice(0, 7) === maintenanceMonthFilter
     );
   }, [maintenanceWithCost, maintenanceMonthFilter]);
 
@@ -400,15 +434,44 @@ export default function App() {
     [filteredDashboardInvoices, maintenanceWithCost, linen]
   );
 
+  async function syncHostawayTasks() {
+    try {
+      const res = await fetch("/api/hostaway-tasks");
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error(data);
+        return alert(
+          "Hostaway sync failed: " +
+            (data.error || data.message || "Unknown error")
+        );
+      }
+
+      await loadData();
+
+      alert(
+        `Hostaway sync complete.\nMapped jobs: ${
+          data.mapped_jobs || 0
+        }\nUnmapped jobs: ${data.unmapped_jobs || 0}`
+      );
+    } catch (error) {
+      console.error(error);
+      alert("Hostaway sync failed: " + error.message);
+    }
+  }
+
   async function addMaintenance() {
     const property = selectedProperty || properties[0];
     const guide = priceGuide[0];
 
     if (!property) return;
 
+    const now = new Date().toISOString();
+
     const job = {
       id: `JOB-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      completedAt: "",
       externalId: "",
       propertyId: property.id,
       crmPropertyId: property.id,
@@ -480,6 +543,11 @@ export default function App() {
     const labourTotal = calculateJobLabour(job);
     const totalCost = calculateJobTotal(job);
 
+    const completedAt =
+      job.status === "Completed"
+        ? job.completedAt || new Date().toISOString()
+        : job.completedAt || null;
+
     await supabase
       .from("maintenance_jobs")
       .update({
@@ -499,9 +567,16 @@ export default function App() {
         labour_total: labourTotal,
         material_cost: job.materialCost,
         total_cost: totalCost,
+        completed_at: completedAt,
         invoice_status: job.invoiceStatus,
       })
       .eq("id", job.id);
+
+    if (job.status === "Completed" && !job.completedAt) {
+      setMaintenance((prev) =>
+        prev.map((m) => (m.id === job.id ? { ...m, completedAt } : m))
+      );
+    }
   }
 
   async function changeMaintenanceProperty(propertyId) {
@@ -875,6 +950,30 @@ export default function App() {
     }
   }
 
+  async function handleLogin(email, password) {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      alert(error.message);
+    }
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setSession(null);
+  }
+
+  if (authLoading) {
+    return <div className="loading-screen">Checking login...</div>;
+  }
+
+  if (!session) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   if (loading) return <div className="loading-screen">Loading CRM...</div>;
 
   return (
@@ -907,6 +1006,16 @@ export default function App() {
               Premium operations control for linen, maintenance, invoices and
               properties.
             </p>
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <button className="action-btn" onClick={syncHostawayTasks}>
+              Sync Hostaway Now
+            </button>
+
+            <button className="action-btn secondary" onClick={handleLogout}>
+              Logout
+            </button>
           </div>
         </header>
 
@@ -1100,7 +1209,7 @@ export default function App() {
               </div>
 
               <div className="dashboard-filter-card">
-                <label>Filter maintenance by month</label>
+                <label>Filter maintenance by completion month</label>
                 <select
                   value={maintenanceMonthFilter}
                   onChange={(e) => setMaintenanceMonthFilter(e.target.value)}
@@ -1117,7 +1226,7 @@ export default function App() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th>Completed Date</th>
                       <th>Job</th>
                       <th>Property</th>
                       <th>Task</th>
@@ -1131,25 +1240,30 @@ export default function App() {
                   <tbody>
                     {filteredMaintenanceJobs.length === 0 ? (
                       <tr>
-                        <td colSpan="8">No maintenance jobs found for this month.</td>
+                        <td colSpan="8">
+                          No maintenance jobs found for this completion month.
+                        </td>
                       </tr>
                     ) : (
                       filteredMaintenanceJobs.map((job) => (
                         <tr
                           key={job.id}
                           className={
-                            selectedMaintenanceId === job.id ? "selected-row" : ""
+                            selectedMaintenanceId === job.id
+                              ? "selected-row"
+                              : ""
                           }
                           onClick={() => setSelectedMaintenanceId(job.id)}
                         >
-                          <td>{formatDate(job.createdAt)}</td>
+                          <td>{formatDate(job.completedAt)}</td>
                           <td>{job.title}</td>
                           <td>{job.propertyName || "Unmapped Property"}</td>
                           <td>{job.taskName}</td>
                           <td>{job.status}</td>
                           <td>{money(job.totalCost)}</td>
                           <td>
-                            {job.status === "Completed" && job.invoiceStatus !== "Billed" ? (
+                            {job.status === "Completed" &&
+                            job.invoiceStatus !== "Billed" ? (
                               <button
                                 className="mini-action-btn"
                                 onClick={(e) => {
@@ -1547,7 +1661,10 @@ export default function App() {
 
                     <div className="invoice-notes">
                       <div className="bill-label">Notes</div>
-                      <p>{selectedInvoiceWithItems.notes || "Paid in full, thank you"}</p>
+                      <p>
+                        {selectedInvoiceWithItems.notes ||
+                          "Paid in full, thank you"}
+                      </p>
                     </div>
                   </div>
                 </>
@@ -1670,6 +1787,7 @@ function Field({ label, children }) {
     </div>
   );
 }
+
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1722,7 +1840,11 @@ function LoginScreen({ onLogin }) {
           autoComplete="current-password"
         />
 
-        <button className="action-btn login-btn" type="submit" disabled={submitting}>
+        <button
+          className="action-btn login-btn"
+          type="submit"
+          disabled={submitting}
+        >
           {submitting ? "Logging in..." : "Login"}
         </button>
       </form>
