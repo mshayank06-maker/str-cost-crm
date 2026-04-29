@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 export default async function handler(req, res) {
   try {
@@ -20,6 +21,13 @@ export default async function handler(req, res) {
       return res.status(500).json({
         step: "env_error",
         error: "Missing Hostaway environment variables.",
+      });
+    }
+
+    if (!Number.isFinite(hostawayAccountId)) {
+      return res.status(500).json({
+        step: "env_error",
+        error: "HOSTAWAY_ACCOUNT_ID must be a number.",
       });
     }
 
@@ -262,7 +270,6 @@ export default async function handler(req, res) {
     );
 
     // 10. UPSERT MAINTENANCE JOBS
-    // Important: do not reset Billed jobs back to Ready to Invoice.
     const rows = preparedRows.map((item) => {
       const existingStatus = existingJobStatusById[item.row.id];
 
@@ -289,10 +296,6 @@ export default async function handler(req, res) {
     }
 
     // 11. AUTO-CREATE CRM INVOICES
-    // This only invoices tasks that use the exact maintenance description format:
-    // Labour Hours:
-    // What job was done:
-    // Materials Cost:
     const autoInvoiceCandidates = preparedRows
       .filter((item) => {
         const jobId = item.row.id;
@@ -350,6 +353,7 @@ export default async function handler(req, res) {
           hostaway_expense_status: "Pending",
           hostaway_expense_id: null,
           hostaway_expense_error: null,
+          invoice_pdf_url: null,
         });
 
         createdInvoiceItems.push({
@@ -411,7 +415,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 12. CREATE HOSTAWAY EXPENSES FOR NEW CRM INVOICES
+    // 12. CREATE HOSTAWAY EXPENSES WITH PDF ATTACHMENT
     const hostawayExpenseResults = [];
 
     for (const invoice of createdInvoices) {
@@ -466,6 +470,53 @@ export default async function handler(req, res) {
         continue;
       }
 
+      let invoicePdfUrl = null;
+      let pdfFileName = null;
+
+      try {
+        pdfFileName = `${invoice.invoice_number}-${job.id}.pdf`;
+
+        const invoicePdfBuffer = await generateInvoicePdfBuffer({
+          invoiceNumber: invoice.invoice_number,
+          invoiceDate: invoice.invoice_date,
+          dueDate: invoice.due_date,
+          propertyName: invoice.property_name,
+          propertyAddress: invoice.property_address,
+          jobTitle: job.title,
+          taskName: job.task_name,
+          labourHours: Number(job.labour_hours || 0),
+          labourRate: Number(job.labour_rate || 0),
+          labourSubtotal: Number(invoice.labour_subtotal || 0),
+          materialsTotal: Number(invoice.materials_total || 0),
+          total: Number(invoice.total || 0),
+        });
+
+        invoicePdfUrl = await uploadInvoicePdfToSupabase({
+          supabase,
+          fileName: pdfFileName,
+          pdfBuffer: invoicePdfBuffer,
+        });
+
+        await supabase
+          .from("invoices")
+          .update({ invoice_pdf_url: invoicePdfUrl })
+          .eq("id", invoice.id);
+      } catch (pdfError) {
+        await updateInvoiceExpenseStatus(supabase, invoice.id, {
+          status: "Failed",
+          error: `PDF generation/upload failed: ${pdfError.message}`,
+        });
+
+        hostawayExpenseResults.push({
+          invoice_number: invoice.invoice_number,
+          job_id: invoice.job_id,
+          status: "Failed",
+          error: `PDF generation/upload failed: ${pdfError.message}`,
+        });
+
+        continue;
+      }
+
       const expensePayload = {
         accountId: hostawayAccountId,
         ownerStatementId: null,
@@ -479,7 +530,15 @@ export default async function handler(req, res) {
         ownerStatementIds: [],
         categories: [],
         categoriesNames: ["Maintenance"],
-        attachments: [],
+
+        // Hostaway docs show attachments as an array but do not show the exact file object format.
+        // This sends a public PDF URL as an attachment object.
+        attachments: [
+          {
+            name: pdfFileName,
+            url: invoicePdfUrl,
+          },
+        ],
       };
 
       const expenseResult = await createHostawayExpense({
@@ -503,6 +562,11 @@ export default async function handler(req, res) {
           hostaway_expense_id: expenseId,
           amount,
           listingMapId: Number(job.hostaway_listing_id),
+          invoice_pdf_url: invoicePdfUrl,
+          attachment_format_sent: {
+            name: pdfFileName,
+            url: invoicePdfUrl,
+          },
         });
       } else {
         await updateInvoiceExpenseStatus(supabase, invoice.id, {
@@ -519,7 +583,6 @@ export default async function handler(req, res) {
         });
       }
 
-      // Hostaway has API rate limits, so do not hammer it with many expense posts at once.
       await sleep(700);
     }
 
@@ -751,6 +814,128 @@ async function updateInvoiceExpenseStatus(
   }
 
   await supabase.from("invoices").update(update).eq("id", invoiceId);
+}
+
+async function generateInvoicePdfBuffer({
+  invoiceNumber,
+  invoiceDate,
+  dueDate,
+  propertyName,
+  propertyAddress,
+  jobTitle,
+  taskName,
+  labourHours,
+  labourRate,
+  labourSubtotal,
+  materialsTotal,
+  total,
+}) {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([595.28, 841.89]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const drawText = (text, x, y, size = 10, bold = false) => {
+    page.drawText(String(text || ""), {
+      x,
+      y,
+      size,
+      font: bold ? boldFont : font,
+      color: rgb(0.05, 0.08, 0.15),
+    });
+  };
+
+  const drawMoney = (amount) => `£${Number(amount || 0).toFixed(2)}`;
+
+  drawText("CAPITAL STAY", 50, 790, 20, true);
+  drawText("Maintenance Invoice", 380, 790, 18, true);
+
+  drawText(`Invoice No: ${invoiceNumber}`, 380, 760, 10, true);
+  drawText(`Date: ${invoiceDate}`, 380, 745, 10);
+  drawText(`Due: ${dueDate}`, 380, 730, 10);
+
+  page.drawLine({
+    start: { x: 50, y: 710 },
+    end: { x: 545, y: 710 },
+    thickness: 1,
+    color: rgb(0.1, 0.25, 0.55),
+  });
+
+  drawText("PROPERTY", 50, 680, 9, true);
+  drawText(propertyName, 50, 660, 12, true);
+  drawText(propertyAddress, 50, 645, 10);
+
+  drawText("DESCRIPTION", 50, 595, 9, true);
+  drawText("HOURS", 290, 595, 9, true);
+  drawText("RATE", 350, 595, 9, true);
+  drawText("LABOUR", 410, 595, 9, true);
+  drawText("MATERIALS", 470, 595, 9, true);
+  drawText("TOTAL", 535, 595, 9, true);
+
+  page.drawLine({
+    start: { x: 50, y: 585 },
+    end: { x: 545, y: 585 },
+    thickness: 0.5,
+    color: rgb(0.75, 0.78, 0.82),
+  });
+
+  drawText(`${jobTitle || "Maintenance"} - ${taskName || ""}`, 50, 560, 9);
+  drawText(labourHours, 290, 560, 9);
+  drawText(drawMoney(labourRate), 350, 560, 9);
+  drawText(drawMoney(labourSubtotal), 410, 560, 9);
+  drawText(drawMoney(materialsTotal), 470, 560, 9);
+  drawText(drawMoney(total), 535, 560, 9);
+
+  page.drawLine({
+    start: { x: 50, y: 545 },
+    end: { x: 545, y: 545 },
+    thickness: 0.5,
+    color: rgb(0.75, 0.78, 0.82),
+  });
+
+  drawText("Labour Subtotal", 360, 500, 10);
+  drawText(drawMoney(labourSubtotal), 480, 500, 10, true);
+
+  drawText("Materials Total", 360, 475, 10);
+  drawText(drawMoney(materialsTotal), 480, 475, 10, true);
+
+  page.drawLine({
+    start: { x: 360, y: 460 },
+    end: { x: 545, y: 460 },
+    thickness: 1,
+    color: rgb(0.1, 0.25, 0.55),
+  });
+
+  drawText("Grand Total", 360, 435, 12, true);
+  drawText(drawMoney(total), 480, 435, 12, true);
+
+  drawText("NOTES", 50, 390, 9, true);
+  drawText("Paid in full, thank you", 50, 370, 10);
+
+  const pdfBytes = await pdfDoc.save();
+  return Buffer.from(pdfBytes);
+}
+
+async function uploadInvoicePdfToSupabase({ supabase, fileName, pdfBuffer }) {
+  const safeFileName = fileName.replace(/[^a-zA-Z0-9-.]/g, "_");
+  const filePath = `hostaway-invoices/${safeFileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("crm-invoices")
+    .upload(filePath, pdfBuffer, {
+      contentType: "application/pdf",
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Invoice PDF upload failed: ${uploadError.message}`);
+  }
+
+  const { data } = supabase.storage
+    .from("crm-invoices")
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
 }
 
 function sleep(ms) {
