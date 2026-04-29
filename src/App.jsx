@@ -66,15 +66,21 @@ const starterLinen = [
 ];
 
 const money = (v) =>
-  new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(v || 0));
+  new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+  }).format(Number(v || 0));
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-const formatDate = (value) => (value ? new Date(value).toLocaleDateString("en-GB") : "");
+const formatDate = (value) =>
+  value ? new Date(value).toLocaleDateString("en-GB") : "";
 
 function formatMonth(value) {
   if (value === "all") return "All Months";
+
   const [year, month] = value.split("-");
+
   return new Date(Number(year), Number(month) - 1).toLocaleString("en-GB", {
     month: "long",
     year: "numeric",
@@ -176,119 +182,183 @@ export default function App() {
     loadData();
   }, []);
 
-async function loadData() {
-  try {
-    setLoading(true);
+  async function loadData() {
+    try {
+      setLoading(true);
 
-    await supabase.from("properties").upsert(starterProperties.map(propertyToDb), { onConflict: "id" });
-    await supabase.from("linen_items").upsert(starterLinen.map(linenToDb), { onConflict: "id" });
+      await supabase
+        .from("properties")
+        .upsert(starterProperties.map(propertyToDb), { onConflict: "id" });
 
-    const [propertiesRes, linenRes, maintenanceRes, invoicesRes, invoiceItemsRes] = await Promise.all([
-      supabase.from("properties").select("*").order("id"),
-      supabase.from("linen_items").select("*").order("id"),
-      supabase.from("maintenance_jobs").select("*").order("created_at", { ascending: false }),
-      supabase.from("invoices").select("*").order("created_at", { ascending: false }),
-      supabase.from("invoice_items").select("*"),
-    ]);
+      await supabase
+        .from("linen_items")
+        .upsert(starterLinen.map(linenToDb), { onConflict: "id" });
 
-    if (propertiesRes.error) console.error("Properties error:", propertiesRes.error);
-    if (linenRes.error) console.error("Linen error:", linenRes.error);
-    if (maintenanceRes.error) console.error("Maintenance error:", maintenanceRes.error);
-    if (invoicesRes.error) console.error("Invoices error:", invoicesRes.error);
-    if (invoiceItemsRes.error) console.error("Invoice items error:", invoiceItemsRes.error);
+      const [
+        propertiesRes,
+        linenRes,
+        maintenanceRes,
+        invoicesRes,
+        invoiceItemsRes,
+      ] = await Promise.all([
+        supabase.from("properties").select("*").order("id"),
+        supabase.from("linen_items").select("*").order("id"),
+        supabase.from("maintenance_jobs").select("*").order("created_at", {
+          ascending: false,
+        }),
+        supabase.from("invoices").select("*").order("created_at", {
+          ascending: false,
+        }),
+        supabase.from("invoice_items").select("*"),
+      ]);
 
-    setProperties((propertiesRes.data || []).map(propertyFromDb));
-    setLinen((linenRes.data || []).map(linenFromDb));
+      if (propertiesRes.error) console.error("Properties error:", propertiesRes.error);
+      if (linenRes.error) console.error("Linen error:", linenRes.error);
+      if (maintenanceRes.error) console.error("Maintenance error:", maintenanceRes.error);
+      if (invoicesRes.error) console.error("Invoices error:", invoicesRes.error);
+      if (invoiceItemsRes.error) console.error("Invoice items error:", invoiceItemsRes.error);
 
-    setMaintenance(
-      (maintenanceRes.data || []).map((job) => ({
-        id: job.id,
-        propertyId: job.property_id,
-        propertyName: job.property_name,
-        propertyAddress: job.property_address,
-        title: job.title,
-        taskName: job.task_name || "Hostaway Task",
-        category: job.category || "Maintenance",
-        assignedTo: job.assigned_to || "Hostaway",
-        status: job.status || "Completed",
-        labourHours: Number(job.labour_hours || 1),
-        labourRate: Number(job.labour_rate || 0),
-        materialCost: Number(job.material_cost || 0),
-        invoiceStatus: job.invoice_status || "Not Started",
-      }))
-    );
+      const loadedProperties = (propertiesRes.data || []).map(propertyFromDb);
+      const loadedLinen = (linenRes.data || []).map(linenFromDb);
 
-    setInvoices((invoicesRes.data || []).map((inv) => ({
-      id: inv.id,
-      invoiceNumber: inv.invoice_number,
-      invoiceDate: inv.invoice_date,
-      dueDate: inv.due_date,
-      propertyId: inv.property_id,
-      propertyName: inv.property_name,
-      propertyAddress: inv.property_address,
-      labourSubtotal: Number(inv.labour_subtotal || 0),
-      materialsTotal: Number(inv.materials_total || 0),
-      total: Number(inv.total || 0),
-      status: inv.status,
-    })));
+      setProperties(loadedProperties);
+      setLinen(loadedLinen);
 
-    setInvoiceItems((invoiceItemsRes.data || []).map((item) => ({
-      id: item.id,
-      invoiceId: item.invoice_id,
-      jobId: item.job_id,
-      title: item.title,
-      taskName: item.task_name,
-      labourHours: Number(item.labour_hours || 0),
-      labourRate: Number(item.labour_rate || 0),
-      labourCharge: Number(item.labour_charge || 0),
-      materialCost: Number(item.material_cost || 0),
-      totalCost: Number(item.total_cost || 0),
-    })));
+      setMaintenance(
+        (maintenanceRes.data || []).map((job) => {
+          const crmPropertyId = job.crm_property_id || job.property_id || "";
+          const matchedProperty = loadedProperties.find(
+            (p) => p.id === crmPropertyId
+          );
 
-  } catch (error) {
-    console.error("CRM loading error:", error);
-    alert("CRM loading error: " + error.message);
-  } finally {
-    setLoading(false);
+          return {
+            id: job.id,
+
+            propertyId: matchedProperty ? matchedProperty.id : "",
+            propertyName: matchedProperty
+              ? matchedProperty.name
+              : job.property_name || job.hostaway_listing_name || "Unmapped Property",
+            propertyAddress: matchedProperty
+              ? matchedProperty.address
+              : job.property_address || "",
+
+            crmPropertyId: matchedProperty ? matchedProperty.id : "",
+            hostawayListingId: job.hostaway_listing_id || "",
+            hostawayListingName: job.hostaway_listing_name || "",
+
+            title: job.title || "Maintenance Job",
+            taskName: job.task_name || "Hostaway Task",
+            category: job.category || "Maintenance",
+            assignedTo: job.assigned_to || "Hostaway",
+            status: job.status || "Completed",
+            labourHours: Number(job.labour_hours || 1),
+            labourRate: Number(job.labour_rate || 0),
+            materialCost: Number(job.material_cost || 0),
+            invoiceStatus: job.invoice_status || "Not Started",
+          };
+        })
+      );
+
+      setInvoices(
+        (invoicesRes.data || []).map((inv) => ({
+          id: inv.id,
+          invoiceNumber: inv.invoice_number,
+          invoiceDate: inv.invoice_date,
+          dueDate: inv.due_date,
+          propertyId: inv.property_id,
+          propertyName: inv.property_name,
+          propertyAddress: inv.property_address,
+          labourSubtotal: Number(inv.labour_subtotal || 0),
+          materialsTotal: Number(inv.materials_total || 0),
+          total: Number(inv.total || 0),
+          status: inv.status,
+        }))
+      );
+
+      setInvoiceItems(
+        (invoiceItemsRes.data || []).map((item) => ({
+          id: item.id,
+          invoiceId: item.invoice_id,
+          jobId: item.job_id,
+          title: item.title,
+          taskName: item.task_name,
+          labourHours: Number(item.labour_hours || 0),
+          labourRate: Number(item.labour_rate || 0),
+          labourCharge: Number(item.labour_charge || 0),
+          materialCost: Number(item.material_cost || 0),
+          totalCost: Number(item.total_cost || 0),
+        }))
+      );
+    } catch (error) {
+      console.error("CRM loading error:", error);
+      alert("CRM loading error: " + error.message);
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
+  const selectedProperty =
+    properties.find((p) => p.id === selectedPropertyId) || properties[0];
 
-  const selectedProperty = properties.find((p) => p.id === selectedPropertyId) || properties[0];
-  const selectedLinen = linen.find((l) => l.id === selectedLinenId) || null;
-  const selectedMaintenance = maintenance.find((m) => m.id === selectedMaintenanceId) || null;
-  const selectedInvoice = invoices.find((i) => i.id === selectedInvoiceId) || null;
+  const selectedLinen =
+    linen.find((l) => l.id === selectedLinenId) || null;
+
+  const selectedMaintenance =
+    maintenance.find((m) => m.id === selectedMaintenanceId) || null;
+
+  const selectedInvoice =
+    invoices.find((i) => i.id === selectedInvoiceId) || null;
 
   const selectedInvoiceWithItems = selectedInvoice
-    ? { ...selectedInvoice, items: invoiceItems.filter((item) => item.invoiceId === selectedInvoice.id) }
+    ? {
+        ...selectedInvoice,
+        items: invoiceItems.filter((item) => item.invoiceId === selectedInvoice.id),
+      }
     : null;
 
   const maintenanceWithCost = useMemo(
-    () => maintenance.map((job) => ({ ...job, labourCharge: calculateJobLabour(job), totalCost: calculateJobTotal(job) })),
+    () =>
+      maintenance.map((job) => ({
+        ...job,
+        labourCharge: calculateJobLabour(job),
+        totalCost: calculateJobTotal(job),
+      })),
     [maintenance]
   );
 
   const invoiceJobs = useMemo(
     () =>
       maintenanceWithCost.filter(
-        (job) => job.propertyId === invoiceForm.propertyId && job.status === "Completed" && job.invoiceStatus !== "Billed"
+        (job) =>
+          job.propertyId === invoiceForm.propertyId &&
+          job.status === "Completed" &&
+          job.invoiceStatus !== "Billed"
       ),
     [maintenanceWithCost, invoiceForm.propertyId]
   );
 
   const invoiceMonthOptions = useMemo(() => {
-    const months = invoices.map((inv) => inv.invoiceDate?.slice(0, 7)).filter(Boolean);
+    const months = invoices
+      .map((inv) => inv.invoiceDate?.slice(0, 7))
+      .filter(Boolean);
+
     return ["all", ...Array.from(new Set(months))];
   }, [invoices]);
 
   const filteredDashboardInvoices = useMemo(() => {
     if (dashboardMonthFilter === "all") return invoices;
-    return invoices.filter((inv) => inv.invoiceDate?.slice(0, 7) === dashboardMonthFilter);
+
+    return invoices.filter(
+      (inv) => inv.invoiceDate?.slice(0, 7) === dashboardMonthFilter
+    );
   }, [invoices, dashboardMonthFilter]);
 
   const dashboard = useMemo(
     () => ({
-      maintenanceCostsCharged: filteredDashboardInvoices.reduce((sum, inv) => sum + Number(inv.labourSubtotal || 0), 0),
+      maintenanceCostsCharged: filteredDashboardInvoices.reduce(
+        (sum, inv) => sum + Number(inv.labourSubtotal || 0),
+        0
+      ),
       openMaintenance: maintenanceWithCost.filter((j) => j.status !== "Completed").length,
       invoices: filteredDashboardInvoices.length,
       lowLinen: linen.filter((l) => getLinenStatus(l) === "low").length,
@@ -300,13 +370,17 @@ async function loadData() {
   async function addMaintenance() {
     const property = selectedProperty || properties[0];
     const guide = priceGuide[0];
+
     if (!property) return;
 
     const job = {
       id: `JOB-${Date.now()}`,
       propertyId: property.id,
+      crmPropertyId: property.id,
       propertyName: property.name,
       propertyAddress: property.address,
+      hostawayListingId: "",
+      hostawayListingName: "",
       title: "New Maintenance Job",
       taskName: guide.task,
       category: guide.category,
@@ -321,8 +395,11 @@ async function loadData() {
     const { error } = await supabase.from("maintenance_jobs").insert({
       id: job.id,
       property_id: job.propertyId,
+      crm_property_id: job.crmPropertyId,
       property_name: job.propertyName,
       property_address: job.propertyAddress,
+      hostaway_listing_id: job.hostawayListingId,
+      hostaway_listing_name: job.hostawayListingName,
       title: job.title,
       task_name: job.taskName,
       category: job.category,
@@ -344,7 +421,12 @@ async function loadData() {
     const numeric = ["labourHours", "labourRate", "materialCost"];
     const updatedValue = numeric.includes(field) ? Number(value) : value;
 
-    const updated = maintenance.map((job) => (job.id === selectedMaintenanceId ? { ...job, [field]: updatedValue } : job));
+    const updated = maintenance.map((job) =>
+      job.id === selectedMaintenanceId
+        ? { ...job, [field]: updatedValue }
+        : job
+    );
+
     setMaintenance(updated);
 
     const job = updated.find((j) => j.id === selectedMaintenanceId);
@@ -353,7 +435,8 @@ async function loadData() {
     await supabase
       .from("maintenance_jobs")
       .update({
-        property_id: job.propertyId,
+        property_id: job.propertyId || null,
+        crm_property_id: job.propertyId || null,
         property_name: job.propertyName,
         property_address: job.propertyAddress,
         title: job.title,
@@ -371,21 +454,28 @@ async function loadData() {
 
   async function changeMaintenanceProperty(propertyId) {
     const property = properties.find((p) => p.id === propertyId);
+
     if (!property || !selectedMaintenance) return;
 
     const updatedJob = {
       ...selectedMaintenance,
       propertyId: property.id,
+      crmPropertyId: property.id,
       propertyName: property.name,
       propertyAddress: property.address,
     };
 
-    setMaintenance((prev) => prev.map((job) => (job.id === selectedMaintenanceId ? updatedJob : job)));
+    setMaintenance((prev) =>
+      prev.map((job) =>
+        job.id === selectedMaintenanceId ? updatedJob : job
+      )
+    );
 
     await supabase
       .from("maintenance_jobs")
       .update({
         property_id: updatedJob.propertyId,
+        crm_property_id: updatedJob.crmPropertyId,
         property_name: updatedJob.propertyName,
         property_address: updatedJob.propertyAddress,
       })
@@ -394,6 +484,7 @@ async function loadData() {
 
   async function applyPriceGuide(taskName) {
     const guide = priceGuide.find((item) => item.task === taskName);
+
     if (!guide || !selectedMaintenance) return;
 
     const updatedJob = {
@@ -403,7 +494,11 @@ async function loadData() {
       labourRate: guide.hourlyRate,
     };
 
-    setMaintenance((prev) => prev.map((job) => (job.id === selectedMaintenanceId ? updatedJob : job)));
+    setMaintenance((prev) =>
+      prev.map((job) =>
+        job.id === selectedMaintenanceId ? updatedJob : job
+      )
+    );
 
     await supabase
       .from("maintenance_jobs")
@@ -417,19 +512,36 @@ async function loadData() {
 
   async function deleteMaintenanceJob(jobId) {
     const job = maintenance.find((m) => m.id === jobId);
-    if (job?.invoiceStatus === "Billed") return alert("Delete the invoice first before removing this maintenance job.");
+
+    if (job?.invoiceStatus === "Billed") {
+      return alert("Delete the invoice first before removing this maintenance job.");
+    }
 
     await supabase.from("maintenance_jobs").delete().eq("id", jobId);
+
     setMaintenance((prev) => prev.filter((job) => job.id !== jobId));
-    if (selectedMaintenanceId === jobId) setSelectedMaintenanceId("");
+
+    if (selectedMaintenanceId === jobId) {
+      setSelectedMaintenanceId("");
+    }
   }
 
   async function createInvoice() {
     const property = properties.find((p) => p.id === invoiceForm.propertyId);
-    if (!property || invoiceJobs.length === 0) return alert("No completed jobs ready to invoice.");
 
-    const labourSubtotal = invoiceJobs.reduce((sum, job) => sum + calculateJobLabour(job), 0);
-    const materialsTotal = invoiceJobs.reduce((sum, job) => sum + Number(job.materialCost || 0), 0);
+    if (!property || invoiceJobs.length === 0) {
+      return alert("No completed jobs ready to invoice.");
+    }
+
+    const labourSubtotal = invoiceJobs.reduce(
+      (sum, job) => sum + calculateJobLabour(job),
+      0
+    );
+
+    const materialsTotal = invoiceJobs.reduce(
+      (sum, job) => sum + Number(job.materialCost || 0),
+      0
+    );
 
     const invoice = {
       id: `INVREC-${Date.now()}`,
@@ -492,11 +604,23 @@ async function loadData() {
     if (itemError) return alert(itemError.message);
 
     const jobIds = invoiceJobs.map((job) => job.id);
-    await supabase.from("maintenance_jobs").update({ invoice_status: "Billed" }).in("id", jobIds);
+
+    await supabase
+      .from("maintenance_jobs")
+      .update({ invoice_status: "Billed" })
+      .in("id", jobIds);
 
     setInvoices((prev) => [invoice, ...prev]);
     setInvoiceItems((prev) => [...items, ...prev]);
-    setMaintenance((prev) => prev.map((job) => (jobIds.includes(job.id) ? { ...job, invoiceStatus: "Billed" } : job)));
+
+    setMaintenance((prev) =>
+      prev.map((job) =>
+        jobIds.includes(job.id)
+          ? { ...job, invoiceStatus: "Billed" }
+          : job
+      )
+    );
+
     setSelectedInvoiceId(invoice.id);
     setActiveTab("invoices");
   }
@@ -507,17 +631,41 @@ async function loadData() {
 
     await supabase.from("invoice_items").delete().eq("invoice_id", invoiceId);
     await supabase.from("invoices").delete().eq("id", invoiceId);
-    if (jobIds.length) await supabase.from("maintenance_jobs").update({ invoice_status: "Pending" }).in("id", jobIds);
 
-    setInvoiceItems((prev) => prev.filter((item) => item.invoiceId !== invoiceId));
-    setInvoices((prev) => prev.filter((invoice) => invoice.id !== invoiceId));
-    setMaintenance((prev) => prev.map((job) => (jobIds.includes(job.id) ? { ...job, invoiceStatus: "Pending" } : job)));
+    if (jobIds.length) {
+      await supabase
+        .from("maintenance_jobs")
+        .update({ invoice_status: "Pending" })
+        .in("id", jobIds);
+    }
+
+    setInvoiceItems((prev) =>
+      prev.filter((item) => item.invoiceId !== invoiceId)
+    );
+
+    setInvoices((prev) =>
+      prev.filter((invoice) => invoice.id !== invoiceId)
+    );
+
+    setMaintenance((prev) =>
+      prev.map((job) =>
+        jobIds.includes(job.id)
+          ? { ...job, invoiceStatus: "Pending" }
+          : job
+      )
+    );
+
     setSelectedInvoiceId("");
   }
 
   async function updateInvoiceStatus(invoiceId, status) {
     await supabase.from("invoices").update({ status }).eq("id", invoiceId);
-    setInvoices((prev) => prev.map((invoice) => (invoice.id === invoiceId ? { ...invoice, status } : invoice)));
+
+    setInvoices((prev) =>
+      prev.map((invoice) =>
+        invoice.id === invoiceId ? { ...invoice, status } : invoice
+      )
+    );
   }
 
   async function addProperty() {
@@ -530,6 +678,7 @@ async function loadData() {
     };
 
     await supabase.from("properties").insert(propertyToDb(property));
+
     setProperties((prev) => [...prev, property]);
     setSelectedPropertyId(property.id);
   }
@@ -538,11 +687,20 @@ async function loadData() {
     const numeric = ["beds", "approvalLimit"];
     const updatedValue = numeric.includes(field) ? Number(value) : value;
 
-    const updated = properties.map((p) => (p.id === selectedPropertyId ? { ...p, [field]: updatedValue } : p));
+    const updated = properties.map((p) =>
+      p.id === selectedPropertyId ? { ...p, [field]: updatedValue } : p
+    );
+
     setProperties(updated);
 
     const property = updated.find((p) => p.id === selectedPropertyId);
-    if (property) await supabase.from("properties").update(propertyToDb(property)).eq("id", property.id);
+
+    if (property) {
+      await supabase
+        .from("properties")
+        .update(propertyToDb(property))
+        .eq("id", property.id);
+    }
   }
 
   async function addLinenItem() {
@@ -557,6 +715,7 @@ async function loadData() {
     };
 
     const { error } = await supabase.from("linen_items").insert(linenToDb(item));
+
     if (error) return alert(error.message);
 
     setLinen((prev) => [...prev, item]);
@@ -567,27 +726,52 @@ async function loadData() {
     const numeric = ["currentStock", "minimumStock", "healthyStock"];
     const updatedValue = numeric.includes(field) ? Number(value) : value;
 
-    const updated = linen.map((l) => (l.id === selectedLinenId ? { ...l, [field]: updatedValue } : l));
+    const updated = linen.map((l) =>
+      l.id === selectedLinenId ? { ...l, [field]: updatedValue } : l
+    );
+
     setLinen(updated);
 
     const item = updated.find((l) => l.id === selectedLinenId);
-    if (item) await supabase.from("linen_items").update(linenToDb(item)).eq("id", item.id);
+
+    if (item) {
+      await supabase
+        .from("linen_items")
+        .update(linenToDb(item))
+        .eq("id", item.id);
+    }
   }
 
   async function adjustLinenStock(id, amount) {
     const item = linen.find((l) => l.id === id);
+
     if (!item) return;
 
-    const updatedItem = { ...item, currentStock: Math.max(0, Number(item.currentStock || 0) + amount) };
-    setLinen((prev) => prev.map((l) => (l.id === id ? updatedItem : l)));
-    await supabase.from("linen_items").update(linenToDb(updatedItem)).eq("id", id);
+    const updatedItem = {
+      ...item,
+      currentStock: Math.max(0, Number(item.currentStock || 0) + amount),
+    };
+
+    setLinen((prev) =>
+      prev.map((l) => (l.id === id ? updatedItem : l))
+    );
+
+    await supabase
+      .from("linen_items")
+      .update(linenToDb(updatedItem))
+      .eq("id", id);
   }
 
   async function deleteLinenItem(id) {
     await supabase.from("linen_items").delete().eq("id", id);
+
     setLinen((prev) => prev.filter((item) => item.id !== id));
-    if (selectedLinenId === id) setSelectedLinenId("");
+
+    if (selectedLinenId === id) {
+      setSelectedLinenId("");
+    }
   }
+
   if (loading) return <div className="loading-screen">Loading CRM...</div>;
 
   return (
@@ -598,23 +782,28 @@ async function loadData() {
           <p>STR Cost Control</p>
         </div>
 
-        {["dashboard", "linen", "maintenance", "invoices", "properties"].map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className={activeTab === tab ? "nav-btn active" : "nav-btn"}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
+        {["dashboard", "linen", "maintenance", "invoices", "properties"].map(
+          (tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={activeTab === tab ? "nav-btn active" : "nav-btn"}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          )
+        )}
       </aside>
 
       <main className="main-content">
         <header className="topbar no-print">
           <div>
             <h1>Internal CRM Dashboard</h1>
-            <p>Premium operations control for linen, maintenance, invoices and properties.</p>
+            <p>
+              Premium operations control for linen, maintenance, invoices and
+              properties.
+            </p>
           </div>
         </header>
 
@@ -622,16 +811,27 @@ async function loadData() {
           <>
             <div className="dashboard-filter-card">
               <label>Filter invoices by month</label>
-              <select value={dashboardMonthFilter} onChange={(e) => setDashboardMonthFilter(e.target.value)}>
+              <select
+                value={dashboardMonthFilter}
+                onChange={(e) => setDashboardMonthFilter(e.target.value)}
+              >
                 {invoiceMonthOptions.map((month) => (
-                  <option key={month} value={month}>{formatMonth(month)}</option>
+                  <option key={month} value={month}>
+                    {formatMonth(month)}
+                  </option>
                 ))}
               </select>
             </div>
 
             <section className="stats-grid">
-              <StatCard title="Maintenance Charged" value={money(dashboard.maintenanceCostsCharged)} />
-              <StatCard title="Open Maintenance" value={dashboard.openMaintenance} />
+              <StatCard
+                title="Maintenance Charged"
+                value={money(dashboard.maintenanceCostsCharged)}
+              />
+              <StatCard
+                title="Open Maintenance"
+                value={dashboard.openMaintenance}
+              />
               <StatCard title="Invoices" value={dashboard.invoices} />
               <StatCard title="Low Linen" value={dashboard.lowLinen} />
               <StatCard title="Reorder Soon" value={dashboard.reorderLinen} />
@@ -644,30 +844,67 @@ async function loadData() {
             <section className="panel list-panel">
               <div className="section-head">
                 <h3>Linen Inventory</h3>
-                <button className="action-btn" onClick={addLinenItem}>Add Linen</button>
+                <button className="action-btn" onClick={addLinenItem}>
+                  Add Linen
+                </button>
               </div>
 
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Item</th><th>Category</th><th>Current</th><th>Minimum</th><th>Healthy</th><th>Status</th><th>Adjust</th>
+                      <th>Item</th>
+                      <th>Category</th>
+                      <th>Current</th>
+                      <th>Minimum</th>
+                      <th>Healthy</th>
+                      <th>Status</th>
+                      <th>Adjust</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {linen.map((item) => {
                       const status = getLinenStatus(item);
+
                       return (
-                        <tr key={item.id} className={selectedLinenId === item.id ? "selected-row" : ""} onClick={() => setSelectedLinenId(item.id)}>
+                        <tr
+                          key={item.id}
+                          className={
+                            selectedLinenId === item.id ? "selected-row" : ""
+                          }
+                          onClick={() => setSelectedLinenId(item.id)}
+                        >
                           <td>{item.item}</td>
                           <td>{item.category}</td>
                           <td>{item.currentStock}</td>
                           <td>{item.minimumStock}</td>
                           <td>{item.healthyStock}</td>
-                          <td><span className={`badge ${status}`}>{getLinenLabel(status)}</span></td>
                           <td>
-                            <button className="mini-action-btn" onClick={(e) => { e.stopPropagation(); adjustLinenStock(item.id, -1); }}>-</button>
-                            <button className="mini-action-btn" onClick={(e) => { e.stopPropagation(); adjustLinenStock(item.id, 1); }}>+</button>
+                            <span className={`badge ${status}`}>
+                              {getLinenLabel(status)}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className="mini-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                adjustLinenStock(item.id, -1);
+                              }}
+                            >
+                              -
+                            </button>
+
+                            <button
+                              className="mini-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                adjustLinenStock(item.id, 1);
+                              }}
+                            >
+                              +
+                            </button>
                           </td>
                         </tr>
                       );
@@ -679,19 +916,72 @@ async function loadData() {
 
             <section className="panel form-panel">
               <h3>Edit Linen</h3>
+
               {selectedLinen ? (
                 <div className="form-grid">
-                  <Field label="Item"><input value={selectedLinen.item} onChange={(e) => updateLinen("item", e.target.value)} /></Field>
-                  <Field label="Category"><input value={selectedLinen.category} onChange={(e) => updateLinen("category", e.target.value)} /></Field>
-                  <Field label="Current Stock"><input type="number" value={selectedLinen.currentStock} onChange={(e) => updateLinen("currentStock", e.target.value)} /></Field>
-                  <Field label="Minimum Stock"><input type="number" value={selectedLinen.minimumStock} onChange={(e) => updateLinen("minimumStock", e.target.value)} /></Field>
-                  <Field label="Healthy Stock"><input type="number" value={selectedLinen.healthyStock} onChange={(e) => updateLinen("healthyStock", e.target.value)} /></Field>
-                  <Field label="Notes"><input value={selectedLinen.notes} onChange={(e) => updateLinen("notes", e.target.value)} /></Field>
+                  <Field label="Item">
+                    <input
+                      value={selectedLinen.item}
+                      onChange={(e) => updateLinen("item", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Category">
+                    <input
+                      value={selectedLinen.category}
+                      onChange={(e) => updateLinen("category", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Current Stock">
+                    <input
+                      type="number"
+                      value={selectedLinen.currentStock}
+                      onChange={(e) =>
+                        updateLinen("currentStock", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Minimum Stock">
+                    <input
+                      type="number"
+                      value={selectedLinen.minimumStock}
+                      onChange={(e) =>
+                        updateLinen("minimumStock", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Healthy Stock">
+                    <input
+                      type="number"
+                      value={selectedLinen.healthyStock}
+                      onChange={(e) =>
+                        updateLinen("healthyStock", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Notes">
+                    <input
+                      value={selectedLinen.notes}
+                      onChange={(e) => updateLinen("notes", e.target.value)}
+                    />
+                  </Field>
+
                   <div className="full-width">
-                    <button className="action-btn danger" onClick={() => deleteLinenItem(selectedLinen.id)}>Delete Linen Item</button>
+                    <button
+                      className="action-btn danger"
+                      onClick={() => deleteLinenItem(selectedLinen.id)}
+                    >
+                      Delete Linen Item
+                    </button>
                   </div>
                 </div>
-              ) : <div className="empty-state">Select a linen item.</div>}
+              ) : (
+                <div className="empty-state">Select a linen item.</div>
+              )}
             </section>
           </div>
         )}
@@ -701,16 +991,49 @@ async function loadData() {
             <section className="panel list-panel">
               <div className="section-head">
                 <h3>Maintenance Jobs</h3>
-                <button className="action-btn" onClick={addMaintenance}>Add Job</button>
+                <button className="action-btn" onClick={addMaintenance}>
+                  Add Job
+                </button>
               </div>
+
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Job</th><th>Property</th><th>Task</th><th>Status</th><th>Total</th><th>Action</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Job</th>
+                      <th>Property</th>
+                      <th>Task</th>
+                      <th>Status</th>
+                      <th>Total</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+
                   <tbody>
                     {maintenanceWithCost.map((job) => (
-                      <tr key={job.id} className={selectedMaintenanceId === job.id ? "selected-row" : ""} onClick={() => setSelectedMaintenanceId(job.id)}>
-                        <td>{job.title}</td><td>{job.propertyName}</td><td>{job.taskName}</td><td>{job.status}</td><td>{money(job.totalCost)}</td>
-                        <td><button className="mini-danger-btn" onClick={(e) => { e.stopPropagation(); deleteMaintenanceJob(job.id); }}>Delete</button></td>
+                      <tr
+                        key={job.id}
+                        className={
+                          selectedMaintenanceId === job.id ? "selected-row" : ""
+                        }
+                        onClick={() => setSelectedMaintenanceId(job.id)}
+                      >
+                        <td>{job.title}</td>
+                        <td>{job.propertyName || "Unmapped Property"}</td>
+                        <td>{job.taskName}</td>
+                        <td>{job.status}</td>
+                        <td>{money(job.totalCost)}</td>
+                        <td>
+                          <button
+                            className="mini-danger-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteMaintenanceJob(job.id);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -720,31 +1043,97 @@ async function loadData() {
 
             <section className="panel form-panel">
               <h3>Edit Maintenance</h3>
+
               {selectedMaintenance ? (
                 <div className="form-grid">
                   <Field label="Property">
-                    <select value={selectedMaintenance.propertyId} onChange={(e) => changeMaintenanceProperty(e.target.value)}>
-                      {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    <select
+                      value={selectedMaintenance.propertyId || ""}
+                      onChange={(e) =>
+                        changeMaintenanceProperty(e.target.value)
+                      }
+                    >
+                      <option value="">Select property</option>
+
+                      {properties.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
                     </select>
                   </Field>
-                  <Field label="Title"><input value={selectedMaintenance.title} onChange={(e) => updateMaintenance("title", e.target.value)} /></Field>
+
+                  <Field label="Title">
+                    <input
+                      value={selectedMaintenance.title}
+                      onChange={(e) =>
+                        updateMaintenance("title", e.target.value)
+                      }
+                    />
+                  </Field>
+
                   <Field label="Task">
-                    <select value={selectedMaintenance.taskName} onChange={(e) => applyPriceGuide(e.target.value)}>
-                      {priceGuide.map((p) => <option key={p.task} value={p.task}>{p.task}</option>)}
+                    <select
+                      value={selectedMaintenance.taskName}
+                      onChange={(e) => applyPriceGuide(e.target.value)}
+                    >
+                      {priceGuide.map((p) => (
+                        <option key={p.task} value={p.task}>
+                          {p.task}
+                        </option>
+                      ))}
                     </select>
                   </Field>
-                  <Field label="Category"><input value={selectedMaintenance.category} readOnly /></Field>
+
+                  <Field label="Category">
+                    <input value={selectedMaintenance.category} readOnly />
+                  </Field>
+
                   <Field label="Status">
-                    <select value={selectedMaintenance.status} onChange={(e) => updateMaintenance("status", e.target.value)}>
-                      <option>Open</option><option>In Progress</option><option>Completed</option>
+                    <select
+                      value={selectedMaintenance.status}
+                      onChange={(e) =>
+                        updateMaintenance("status", e.target.value)
+                      }
+                    >
+                      <option>Open</option>
+                      <option>In Progress</option>
+                      <option>Completed</option>
                     </select>
                   </Field>
-                  <Field label="Labour Hours"><input type="number" step="0.25" value={selectedMaintenance.labourHours} onChange={(e) => updateMaintenance("labourHours", e.target.value)} /></Field>
-                  <Field label="Hourly Rate"><input value={selectedMaintenance.labourRate} readOnly /></Field>
-                  <Field label="Materials"><input type="number" value={selectedMaintenance.materialCost} onChange={(e) => updateMaintenance("materialCost", e.target.value)} /></Field>
-                  <Field label="Invoice Status"><input value={selectedMaintenance.invoiceStatus} readOnly /></Field>
+
+                  <Field label="Labour Hours">
+                    <input
+                      type="number"
+                      step="0.25"
+                      value={selectedMaintenance.labourHours}
+                      onChange={(e) =>
+                        updateMaintenance("labourHours", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Hourly Rate">
+                    <input value={selectedMaintenance.labourRate} readOnly />
+                  </Field>
+
+                  <Field label="Materials">
+                    <input
+                      type="number"
+                      value={selectedMaintenance.materialCost}
+                      onChange={(e) =>
+                        updateMaintenance("materialCost", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Invoice Status">
+                    <input value={selectedMaintenance.invoiceStatus} readOnly />
+                  </Field>
                 </div>
-              ) : <div className="empty-state">Add or select a maintenance job.</div>}
+              ) : (
+                <div className="empty-state">Add or select a maintenance job.</div>
+              )}
             </section>
           </div>
         )}
@@ -754,28 +1143,84 @@ async function loadData() {
             <section className="panel list-panel no-print">
               <div className="section-head">
                 <h3>Create Invoice</h3>
-                <button className="action-btn" onClick={createInvoice}>Generate Invoice</button>
+                <button className="action-btn" onClick={createInvoice}>
+                  Generate Invoice
+                </button>
               </div>
 
               <div className="form-grid">
                 <Field label="Property">
-                  <select value={invoiceForm.propertyId} onChange={(e) => setInvoiceForm((p) => ({ ...p, propertyId: e.target.value }))}>
-                    {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <select
+                    value={invoiceForm.propertyId}
+                    onChange={(e) =>
+                      setInvoiceForm((p) => ({
+                        ...p,
+                        propertyId: e.target.value,
+                      }))
+                    }
+                  >
+                    {properties.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
                   </select>
                 </Field>
-                <Field label="Invoice Date"><input type="date" value={invoiceForm.invoiceDate} onChange={(e) => setInvoiceForm((p) => ({ ...p, invoiceDate: e.target.value }))} /></Field>
-                <Field label="Due Date"><input type="date" value={invoiceForm.dueDate} onChange={(e) => setInvoiceForm((p) => ({ ...p, dueDate: e.target.value }))} /></Field>
+
+                <Field label="Invoice Date">
+                  <input
+                    type="date"
+                    value={invoiceForm.invoiceDate}
+                    onChange={(e) =>
+                      setInvoiceForm((p) => ({
+                        ...p,
+                        invoiceDate: e.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+
+                <Field label="Due Date">
+                  <input
+                    type="date"
+                    value={invoiceForm.dueDate}
+                    onChange={(e) =>
+                      setInvoiceForm((p) => ({
+                        ...p,
+                        dueDate: e.target.value,
+                      }))
+                    }
+                  />
+                </Field>
               </div>
 
               <div className="calc-box">
                 <h4>Jobs Ready to Bill</h4>
+
                 <div className="table-wrap small">
                   <table>
-                    <thead><tr><th>Job</th><th>Task</th><th>Total</th></tr></thead>
+                    <thead>
+                      <tr>
+                        <th>Job</th>
+                        <th>Task</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+
                     <tbody>
-                      {invoiceJobs.length === 0 ? <tr><td colSpan="3">No completed jobs ready.</td></tr> : invoiceJobs.map((job) => (
-                        <tr key={job.id}><td>{job.title}</td><td>{job.taskName}</td><td>{money(job.totalCost)}</td></tr>
-                      ))}
+                      {invoiceJobs.length === 0 ? (
+                        <tr>
+                          <td colSpan="3">No completed jobs ready.</td>
+                        </tr>
+                      ) : (
+                        invoiceJobs.map((job) => (
+                          <tr key={job.id}>
+                            <td>{job.title}</td>
+                            <td>{job.taskName}</td>
+                            <td>{money(job.totalCost)}</td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -783,13 +1228,31 @@ async function loadData() {
 
               <div className="calc-box">
                 <h4>Saved Invoices</h4>
+
                 <div className="table-wrap small">
                   <table>
-                    <thead><tr><th>Invoice</th><th>Property</th><th>Status</th></tr></thead>
+                    <thead>
+                      <tr>
+                        <th>Invoice</th>
+                        <th>Property</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+
                     <tbody>
                       {invoices.map((invoice) => (
-                        <tr key={invoice.id} className={selectedInvoiceId === invoice.id ? "selected-row" : ""} onClick={() => setSelectedInvoiceId(invoice.id)}>
-                          <td>{invoice.invoiceNumber}</td><td>{invoice.propertyName}</td><td>{invoice.status}</td>
+                        <tr
+                          key={invoice.id}
+                          className={
+                            selectedInvoiceId === invoice.id
+                              ? "selected-row"
+                              : ""
+                          }
+                          onClick={() => setSelectedInvoiceId(invoice.id)}
+                        >
+                          <td>{invoice.invoiceNumber}</td>
+                          <td>{invoice.propertyName}</td>
+                          <td>{invoice.status}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -802,22 +1265,61 @@ async function loadData() {
               {selectedInvoiceWithItems ? (
                 <>
                   <div className="invoice-actions no-print">
-                    <select value={selectedInvoiceWithItems.status} onChange={(e) => updateInvoiceStatus(selectedInvoiceWithItems.id, e.target.value)}>
-                      <option>Draft</option><option>Sent</option><option>Paid</option>
+                    <select
+                      value={selectedInvoiceWithItems.status}
+                      onChange={(e) =>
+                        updateInvoiceStatus(
+                          selectedInvoiceWithItems.id,
+                          e.target.value
+                        )
+                      }
+                    >
+                      <option>Draft</option>
+                      <option>Sent</option>
+                      <option>Paid</option>
                     </select>
-                    <button className="action-btn danger" onClick={() => deleteInvoice(selectedInvoiceWithItems.id)}>Delete</button>
-                    <button className="action-btn secondary" onClick={() => window.print()}>Print</button>
+
+                    <button
+                      className="action-btn danger"
+                      onClick={() => deleteInvoice(selectedInvoiceWithItems.id)}
+                    >
+                      Delete
+                    </button>
+
+                    <button
+                      className="action-btn secondary"
+                      onClick={() => window.print()}
+                    >
+                      Print
+                    </button>
                   </div>
 
                   <div className="invoice-paper">
                     <div className="invoice-header">
-                      <img src="/logo.png" alt="Logo" className="invoice-logo" />
+                      <img
+                        src="/logo.png"
+                        alt="Logo"
+                        className="invoice-logo"
+                      />
+
                       <div className="invoice-meta">
                         <h2>Maintenance Invoice</h2>
-                        <div><strong>Invoice No:</strong> {selectedInvoiceWithItems.invoiceNumber}</div>
-                        <div><strong>Date:</strong> {formatDate(selectedInvoiceWithItems.invoiceDate)}</div>
-                        <div><strong>Due:</strong> {formatDate(selectedInvoiceWithItems.dueDate)}</div>
-                        <div><strong>Status:</strong> {selectedInvoiceWithItems.status}</div>
+                        <div>
+                          <strong>Invoice No:</strong>{" "}
+                          {selectedInvoiceWithItems.invoiceNumber}
+                        </div>
+                        <div>
+                          <strong>Date:</strong>{" "}
+                          {formatDate(selectedInvoiceWithItems.invoiceDate)}
+                        </div>
+                        <div>
+                          <strong>Due:</strong>{" "}
+                          {formatDate(selectedInvoiceWithItems.dueDate)}
+                        </div>
+                        <div>
+                          <strong>Status:</strong>{" "}
+                          {selectedInvoiceWithItems.status}
+                        </div>
                       </div>
                     </div>
 
@@ -831,11 +1333,23 @@ async function loadData() {
 
                     <div className="table-wrap">
                       <table className="invoice-table">
-                        <thead><tr><th>Description</th><th>Hours</th><th>Rate</th><th>Labour</th><th>Materials</th><th>Total</th></tr></thead>
+                        <thead>
+                          <tr>
+                            <th>Description</th>
+                            <th>Hours</th>
+                            <th>Rate</th>
+                            <th>Labour</th>
+                            <th>Materials</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+
                         <tbody>
                           {selectedInvoiceWithItems.items.map((item) => (
                             <tr key={item.id}>
-                              <td>{item.title} - {item.taskName}</td>
+                              <td>
+                                {item.title} - {item.taskName}
+                              </td>
                               <td>{item.labourHours}</td>
                               <td>{money(item.labourRate)}</td>
                               <td>{money(item.labourCharge)}</td>
@@ -848,9 +1362,24 @@ async function loadData() {
                     </div>
 
                     <div className="invoice-totals">
-                      <div className="metric-row"><span>Labour Subtotal</span><strong>{money(selectedInvoiceWithItems.labourSubtotal)}</strong></div>
-                      <div className="metric-row"><span>Materials Total</span><strong>{money(selectedInvoiceWithItems.materialsTotal)}</strong></div>
-                      <div className="metric-row total-line"><span>Grand Total</span><strong>{money(selectedInvoiceWithItems.total)}</strong></div>
+                      <div className="metric-row">
+                        <span>Labour Subtotal</span>
+                        <strong>
+                          {money(selectedInvoiceWithItems.labourSubtotal)}
+                        </strong>
+                      </div>
+
+                      <div className="metric-row">
+                        <span>Materials Total</span>
+                        <strong>
+                          {money(selectedInvoiceWithItems.materialsTotal)}
+                        </strong>
+                      </div>
+
+                      <div className="metric-row total-line">
+                        <span>Grand Total</span>
+                        <strong>{money(selectedInvoiceWithItems.total)}</strong>
+                      </div>
                     </div>
 
                     <div className="invoice-notes">
@@ -859,7 +1388,9 @@ async function loadData() {
                     </div>
                   </div>
                 </>
-              ) : <div className="empty-state">Generate or select an invoice.</div>}
+              ) : (
+                <div className="empty-state">Generate or select an invoice.</div>
+              )}
             </section>
           </div>
         )}
@@ -869,15 +1400,35 @@ async function loadData() {
             <section className="panel list-panel">
               <div className="section-head">
                 <h3>Properties</h3>
-                <button className="action-btn" onClick={addProperty}>Add Property</button>
+                <button className="action-btn" onClick={addProperty}>
+                  Add Property
+                </button>
               </div>
+
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Name</th><th>Address</th><th>Beds</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Address</th>
+                      <th>Beds</th>
+                    </tr>
+                  </thead>
+
                   <tbody>
                     {properties.map((property) => (
-                      <tr key={property.id} className={selectedPropertyId === property.id ? "selected-row" : ""} onClick={() => setSelectedPropertyId(property.id)}>
-                        <td>{property.name}</td><td>{property.address}</td><td>{property.beds}</td>
+                      <tr
+                        key={property.id}
+                        className={
+                          selectedPropertyId === property.id
+                            ? "selected-row"
+                            : ""
+                        }
+                        onClick={() => setSelectedPropertyId(property.id)}
+                      >
+                        <td>{property.name}</td>
+                        <td>{property.address}</td>
+                        <td>{property.beds}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -887,23 +1438,58 @@ async function loadData() {
 
             <section className="panel form-panel">
               <h3>Edit Property</h3>
+
               {selectedProperty ? (
                 <div className="form-grid">
-                  <Field label="Name"><input value={selectedProperty.name} onChange={(e) => updateProperty("name", e.target.value)} /></Field>
-                  <Field label="Address"><input value={selectedProperty.address} onChange={(e) => updateProperty("address", e.target.value)} /></Field>
-                  <Field label="Beds"><input type="number" value={selectedProperty.beds} onChange={(e) => updateProperty("beds", e.target.value)} /></Field>
-                  <Field label="Approval Limit"><input type="number" value={selectedProperty.approvalLimit} onChange={(e) => updateProperty("approvalLimit", e.target.value)} /></Field>
+                  <Field label="Name">
+                    <input
+                      value={selectedProperty.name}
+                      onChange={(e) =>
+                        updateProperty("name", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Address">
+                    <input
+                      value={selectedProperty.address}
+                      onChange={(e) =>
+                        updateProperty("address", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Beds">
+                    <input
+                      type="number"
+                      value={selectedProperty.beds}
+                      onChange={(e) =>
+                        updateProperty("beds", e.target.value)
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Approval Limit">
+                    <input
+                      type="number"
+                      value={selectedProperty.approvalLimit}
+                      onChange={(e) =>
+                        updateProperty("approvalLimit", e.target.value)
+                      }
+                    />
+                  </Field>
                 </div>
-              ) : <div className="empty-state">Select a property.</div>}
+              ) : (
+                <div className="empty-state">Select a property.</div>
+              )}
             </section>
           </div>
         )}
       </main>
     </div>
   );
-
-
 }
+
 function StatCard({ title, value }) {
   return (
     <div className="stat-card">
