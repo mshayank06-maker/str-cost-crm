@@ -94,8 +94,8 @@ export default async function handler(req, res) {
       )
     );
 
-    // 7. MAP TASKS INTO YOUR CRM FORMAT
-    const rows = completedTasks.map((task) => {
+    // 7. MAP TASKS INTO CRM FORMAT
+    const preparedRows = completedTasks.map((task) => {
       const description = task.description || "";
       const title = task.title || "";
 
@@ -142,7 +142,7 @@ export default async function handler(req, res) {
         task.created_at ||
         null;
 
-      return {
+      const row = {
         id: `HA-${task.id}`,
         external_id: String(task.id),
 
@@ -173,21 +173,200 @@ export default async function handler(req, res) {
         total_cost: totalCost,
 
         completed_at: completedAt,
+      };
 
-        invoice_status: "Ready to Invoice",
+      return {
+        row,
+        autoInvoiceReady:
+          Boolean(matchedProperty) &&
+          parsedDetails.hasLabourHours &&
+          parsedDetails.hasJobDone &&
+          parsedDetails.hasMaterialCost,
       };
     });
 
-    // 8. INSERT / UPDATE MAINTENANCE JOBS
-    const { error } = await supabase
+    const jobIds = preparedRows.map((item) => item.row.id);
+
+    // 8. CHECK EXISTING MAINTENANCE JOB STATUSES
+    const { data: existingJobs, error: existingJobsError } = await supabase
+      .from("maintenance_jobs")
+      .select("id, invoice_status")
+      .in("id", jobIds.length ? jobIds : ["__none__"]);
+
+    if (existingJobsError) {
+      return res.status(500).json({
+        step: "existing_jobs_error",
+        error: existingJobsError.message,
+      });
+    }
+
+    const existingJobStatusById = {};
+    (existingJobs || []).forEach((job) => {
+      existingJobStatusById[job.id] = job.invoice_status;
+    });
+
+    // 9. CHECK EXISTING INVOICES TO PREVENT DUPLICATES
+    const { data: existingInvoices, error: existingInvoicesError } =
+      await supabase
+        .from("invoices")
+        .select("job_id")
+        .in("job_id", jobIds.length ? jobIds : ["__none__"]);
+
+    if (existingInvoicesError) {
+      return res.status(500).json({
+        step: "existing_invoices_error",
+        error: existingInvoicesError.message,
+      });
+    }
+
+    const invoicedJobIds = new Set(
+      (existingInvoices || []).map((invoice) => invoice.job_id)
+    );
+
+    // 10. UPSERT MAINTENANCE JOBS
+    // Important: do not reset Billed jobs back to Ready to Invoice.
+    const rows = preparedRows.map((item) => {
+      const existingStatus = existingJobStatusById[item.row.id];
+
+      const invoiceStatus =
+        invoicedJobIds.has(item.row.id) || existingStatus === "Billed"
+          ? "Billed"
+          : "Ready to Invoice";
+
+      return {
+        ...item.row,
+        invoice_status: invoiceStatus,
+      };
+    });
+
+    const { error: upsertError } = await supabase
       .from("maintenance_jobs")
       .upsert(rows, { onConflict: "id" });
 
-    if (error) {
+    if (upsertError) {
       return res.status(500).json({
         step: "supabase_insert_error",
-        error: error.message,
+        error: upsertError.message,
       });
+    }
+
+    // 11. AUTO-CREATE INVOICES
+    // This only invoices tasks that use the exact maintenance description format:
+    // Labour Hours:
+    // What job was done:
+    // Materials Cost:
+    const autoInvoiceCandidates = preparedRows
+      .filter((item) => {
+        const jobId = item.row.id;
+        const existingStatus = existingJobStatusById[jobId];
+
+        return (
+          item.autoInvoiceReady &&
+          !invoicedJobIds.has(jobId) &&
+          existingStatus !== "Billed" &&
+          item.row.crm_property_id &&
+          item.row.status === "Completed"
+        );
+      })
+      .map((item) => item.row);
+
+    const createdInvoices = [];
+    const createdInvoiceItems = [];
+
+    if (autoInvoiceCandidates.length > 0) {
+      let nextInvoiceSequence = await getNextInvoiceSequence(supabase);
+
+      for (const job of autoInvoiceCandidates) {
+        const invoiceNumber = makeInvoiceNumber(nextInvoiceSequence);
+        nextInvoiceSequence += 1;
+
+        const invoiceId = `INVREC-${Date.now()}-${job.id}`;
+        const itemId = `ITEM-${job.id}-${Date.now()}`;
+
+        const invoiceDate = todayISO();
+        const dueDate = todayISO();
+
+        const labourSubtotal =
+          Number(job.labour_total || 0) ||
+          Number(job.labour_hours || 0) * Number(job.labour_rate || 0);
+
+        const materialsTotal = Number(job.material_cost || 0);
+        const total = labourSubtotal + materialsTotal;
+
+        createdInvoices.push({
+          id: invoiceId,
+          job_id: job.id,
+          source: "maintenance_job",
+          invoice_number: invoiceNumber,
+          invoice_date: invoiceDate,
+          due_date: dueDate,
+          property_id: job.crm_property_id || job.property_id,
+          property_name: job.property_name,
+          property_address: job.property_address,
+          labour_subtotal: labourSubtotal,
+          materials_total: materialsTotal,
+          total: total,
+          status: "Draft",
+          notes: "Paid in full, thank you",
+        });
+
+        createdInvoiceItems.push({
+          id: itemId,
+          invoice_id: invoiceId,
+          job_id: job.id,
+          title: job.title || job.job_done || job.task_name,
+          task_name: job.task_name || job.job_done,
+          labour_hours: Number(job.labour_hours || 0),
+          labour_rate: Number(job.labour_rate || 0),
+          labour_charge: labourSubtotal,
+          material_cost: materialsTotal,
+          total_cost: total,
+        });
+      }
+
+      const { error: invoiceInsertError } = await supabase
+        .from("invoices")
+        .insert(createdInvoices);
+
+      if (invoiceInsertError) {
+        return res.status(500).json({
+          step: "auto_invoice_insert_error",
+          error: invoiceInsertError.message,
+        });
+      }
+
+      const { error: itemInsertError } = await supabase
+        .from("invoice_items")
+        .insert(createdInvoiceItems);
+
+      if (itemInsertError) {
+        await supabase
+          .from("invoices")
+          .delete()
+          .in(
+            "id",
+            createdInvoices.map((invoice) => invoice.id)
+          );
+
+        return res.status(500).json({
+          step: "auto_invoice_items_insert_error",
+          error: itemInsertError.message,
+        });
+      }
+
+      const billedJobIds = autoInvoiceCandidates.map((job) => job.id);
+
+      const { error: billedUpdateError } = await supabase
+        .from("maintenance_jobs")
+        .update({ invoice_status: "Billed" })
+        .in("id", billedJobIds);
+
+      if (billedUpdateError) {
+        return res.status(500).json({
+          step: "auto_invoice_job_status_error",
+          error: billedUpdateError.message,
+        });
+      }
     }
 
     return res.status(200).json({
@@ -197,6 +376,8 @@ export default async function handler(req, res) {
       inserted_or_updated: rows.length,
       mapped_jobs: rows.filter((r) => r.crm_property_id).length,
       unmapped_jobs: rows.filter((r) => !r.crm_property_id).length,
+      auto_invoice_candidates: autoInvoiceCandidates.length,
+      auto_invoices_created: createdInvoices.length,
       sample_rows: rows.slice(0, 5).map((r) => ({
         id: r.id,
         hostaway_listing_id: r.hostaway_listing_id,
@@ -210,6 +391,13 @@ export default async function handler(req, res) {
         labour_total: r.labour_total,
         material_cost: r.material_cost,
         total_cost: r.total_cost,
+        invoice_status: r.invoice_status,
+      })),
+      sample_auto_invoices: createdInvoices.slice(0, 5).map((invoice) => ({
+        invoice_number: invoice.invoice_number,
+        job_id: invoice.job_id,
+        property_name: invoice.property_name,
+        total: invoice.total,
       })),
     });
   } catch (error) {
@@ -241,6 +429,10 @@ function extractStructuredTaskDetails(description = "") {
     labourHours: labourHoursMatch ? Number(labourHoursMatch[1]) : 1,
     jobDone: jobDoneMatch ? jobDoneMatch[1].trim() : "",
     materialCost: materialCostMatch ? Number(materialCostMatch[1]) : 0,
+
+    hasLabourHours: Boolean(labourHoursMatch),
+    hasJobDone: Boolean(jobDoneMatch),
+    hasMaterialCost: Boolean(materialCostMatch),
   };
 }
 
@@ -297,4 +489,37 @@ function getLabourRate(taskName) {
   };
 
   return rates[taskName] || 40;
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function makeInvoiceNumber(sequence) {
+  const year = new Date().getFullYear();
+  return `INV-${year}-${String(sequence).padStart(4, "0")}`;
+}
+
+async function getNextInvoiceSequence(supabase) {
+  const year = new Date().getFullYear();
+
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("invoice_number")
+    .ilike("invoice_number", `INV-${year}-%`);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const numbers = (data || [])
+    .map((invoice) => {
+      const lastPart = String(invoice.invoice_number || "").split("-").pop();
+      return Number(lastPart);
+    })
+    .filter((number) => Number.isFinite(number));
+
+  const highest = numbers.length ? Math.max(...numbers) : 0;
+
+  return highest + 1;
 }
