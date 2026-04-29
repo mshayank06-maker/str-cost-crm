@@ -99,9 +99,17 @@ export default async function handler(req, res) {
       const description = task.description || "";
       const title = task.title || "";
 
-      const details = extractDetails(description);
-      const labourType = detectLabourType(title, description);
+      const parsedDetails = extractStructuredTaskDetails(description);
+
+      const jobDoneText = parsedDetails.jobDone || title || description;
+      const labourType = detectLabourType(jobDoneText, jobDoneText);
       const rate = getLabourRate(labourType);
+
+      const labourHours = parsedDetails.labourHours || 1;
+      const materialCost = parsedDetails.materialCost || 0;
+
+      const labourTotal = labourHours * rate;
+      const totalCost = labourTotal + materialCost;
 
       const hostawayListingId = String(
         task.listingMapId ||
@@ -138,15 +146,18 @@ export default async function handler(req, res) {
 
         task_name: labourType,
         category: labourType,
+        job_done: parsedDetails.jobDone || labourType,
 
         assigned_to: "Hostaway",
         status: "Completed",
 
-        labour_hours: details.labourHours,
+        labour_hours: labourHours,
         labour_rate: rate,
-        material_cost: details.materialCost,
+        labour_total: labourTotal,
+        material_cost: materialCost,
+        total_cost: totalCost,
 
-        invoice_status: "Not Started",
+        invoice_status: "Ready to Invoice",
       };
     });
 
@@ -175,6 +186,12 @@ export default async function handler(req, res) {
         hostaway_listing_name: r.hostaway_listing_name,
         crm_property_id: r.crm_property_id,
         property_name: r.property_name,
+        job_done: r.job_done,
+        labour_hours: r.labour_hours,
+        labour_rate: r.labour_rate,
+        labour_total: r.labour_total,
+        material_cost: r.material_cost,
+        total_cost: r.total_cost,
       })),
     });
   } catch (error) {
@@ -187,16 +204,26 @@ export default async function handler(req, res) {
 
 /* ---------------- HELPERS ---------------- */
 
-function extractDetails(description = "") {
-  const text = description.toLowerCase();
+function extractStructuredTaskDetails(description = "") {
+  const text = String(description || "");
 
-  const hoursMatch = text.match(/(\d+(\.\d+)?)\s*(hour|hours|hr|hrs)/);
-  const labourHours = hoursMatch ? Number(hoursMatch[1]) : 1;
+  const labourHoursMatch = text.match(
+    /labou?r\s*hours?\s*:\s*([0-9]+(?:\.[0-9]+)?)/i
+  );
 
-  const costMatch = text.match(/£\s*(\d+(\.\d+)?)/);
-  const materialCost = costMatch ? Number(costMatch[1]) : 0;
+  const jobDoneMatch = text.match(
+    /what\s*job\s*was\s*done\s*:\s*([\s\S]*?)(?=\n\s*materials?\s*cost\s*:|$)/i
+  );
 
-  return { labourHours, materialCost };
+  const materialCostMatch = text.match(
+    /materials?\s*cost\s*:\s*£?\s*([0-9]+(?:\.[0-9]+)?)/i
+  );
+
+  return {
+    labourHours: labourHoursMatch ? Number(labourHoursMatch[1]) : 1,
+    jobDone: jobDoneMatch ? jobDoneMatch[1].trim() : "",
+    materialCost: materialCostMatch ? Number(materialCostMatch[1]) : 0,
+  };
 }
 
 function detectLabourType(title = "", description = "") {
@@ -248,6 +275,7 @@ function getLabourRate(taskName) {
     "Smoke alarm battery / replacement": 30,
     "Extractor fan clean / minor fix": 40,
     "Fridge / freezer defrost service": 40,
+    "Freezer / fridge defrost service": 40,
   };
 
   return rates[taskName] || 40;
