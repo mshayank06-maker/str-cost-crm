@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/hostaway-tasks",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
