@@ -127,6 +127,21 @@ export default async function handler(req, res) {
         ? propertiesById[String(crmPropertyId)]
         : null;
 
+      const completedAt =
+        task.completedAt ||
+        task.completed_at ||
+        task.completionDate ||
+        task.completion_date ||
+        task.doneAt ||
+        task.done_at ||
+        task.updatedAt ||
+        task.updated_at ||
+        task.endDate ||
+        task.end_date ||
+        task.createdAt ||
+        task.created_at ||
+        null;
+
       return {
         id: `HA-${task.id}`,
         external_id: String(task.id),
@@ -157,6 +172,8 @@ export default async function handler(req, res) {
         material_cost: materialCost,
         total_cost: totalCost,
 
+        completed_at: completedAt,
+
         invoice_status: "Ready to Invoice",
       };
     });
@@ -186,6 +203,7 @@ export default async function handler(req, res) {
         hostaway_listing_name: r.hostaway_listing_name,
         crm_property_id: r.crm_property_id,
         property_name: r.property_name,
+        completed_at: r.completed_at,
         job_done: r.job_done,
         labour_hours: r.labour_hours,
         labour_rate: r.labour_rate,
