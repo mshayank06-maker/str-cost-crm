@@ -7,7 +7,7 @@ export default async function handler(req, res) {
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
 
-    // 1. GET TOKEN
+    // 1. GET HOSTAWAY TOKEN
     const tokenRes = await fetch("https://api.hostaway.com/v1/accessTokens", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -22,43 +22,79 @@ export default async function handler(req, res) {
     const tokenData = await tokenRes.json();
 
     if (!tokenRes.ok) {
-      return res.status(500).json({ step: "token_error", error: tokenData });
+      return res.status(500).json({
+        step: "token_error",
+        error: tokenData,
+      });
     }
 
-    // 2. FETCH TASKS
+    // 2. FETCH HOSTAWAY TASKS
     const tasksRes = await fetch("https://api.hostaway.com/v1/tasks", {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
     });
 
     const tasksData = await tasksRes.json();
     const tasks = tasksData.result || [];
 
-    // 3. FETCH LISTINGS
+    // 3. FETCH HOSTAWAY LISTINGS
     const listingsRes = await fetch("https://api.hostaway.com/v1/listings", {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
     });
 
     const listingsData = await listingsRes.json();
     const listings = listingsData.result || [];
 
     const listingMap = {};
-    listings.forEach((l) => {
-      listingMap[l.id] = l.name;
+    listings.forEach((listing) => {
+      listingMap[String(listing.id)] = listing.name;
     });
 
-    // 4. FETCH YOUR CRM PROPERTIES
-    const { data: properties } = await supabase
-      .from("properties")
-      .select("*");
+    // 4. FETCH HOSTAWAY → CRM PROPERTY MAP
+    const { data: propertyMap, error: mapError } = await supabase
+      .from("hostaway_property_map")
+      .select("hostaway_listing_id, property_id");
 
-    // 5. FILTER COMPLETED TASKS
+    if (mapError) {
+      return res.status(500).json({
+        step: "property_map_error",
+        error: mapError.message,
+      });
+    }
+
+    // 5. FETCH CRM PROPERTIES
+    const { data: properties, error: propertiesError } = await supabase
+      .from("properties")
+      .select("id, name, address");
+
+    if (propertiesError) {
+      return res.status(500).json({
+        step: "properties_error",
+        error: propertiesError.message,
+      });
+    }
+
+    const mapByHostawayId = {};
+    propertyMap.forEach((row) => {
+      mapByHostawayId[String(row.hostaway_listing_id)] = row.property_id;
+    });
+
+    const propertiesById = {};
+    properties.forEach((property) => {
+      propertiesById[String(property.id)] = property;
+    });
+
+    // 6. FILTER COMPLETED TASKS ONLY
     const completedTasks = tasks.filter((task) =>
       ["completed", "done"].includes(
         String(task.status || "").trim().toLowerCase()
       )
     );
 
-    // 6. MAP TASKS
+    // 7. MAP TASKS INTO YOUR CRM FORMAT
     const rows = completedTasks.map((task) => {
       const description = task.description || "";
       const title = task.title || "";
@@ -67,29 +103,35 @@ export default async function handler(req, res) {
       const labourType = detectLabourType(title, description);
       const rate = getLabourRate(labourType);
 
-      const hostawayName = listingMap[task.listingMapId] || "";
+      const hostawayListingId = String(
+        task.listingMapId ||
+          task.listingId ||
+          task.listing?.id ||
+          task.listing_map_id ||
+          ""
+      );
 
-      // 🔥 MATCH PROPERTY
-      const matchedProperty =
-        properties?.find((p) =>
-          hostawayName.toLowerCase().includes(p.name.toLowerCase())
-        ) || null;
+      const hostawayName = listingMap[hostawayListingId] || "";
+
+      const crmPropertyId = mapByHostawayId[hostawayListingId] || null;
+
+      const matchedProperty = crmPropertyId
+        ? propertiesById[String(crmPropertyId)]
+        : null;
 
       return {
         id: `HA-${task.id}`,
         external_id: String(task.id),
 
-        property_id: matchedProperty
-          ? matchedProperty.id
-          : String(task.listingMapId || ""),
+        property_id: matchedProperty ? matchedProperty.id : null,
 
-        property_name: matchedProperty
-          ? matchedProperty.name
-          : hostawayName,
+        hostaway_listing_id: hostawayListingId,
+        hostaway_listing_name: hostawayName,
 
-        property_address: matchedProperty
-          ? matchedProperty.address
-          : "",
+        crm_property_id: matchedProperty ? matchedProperty.id : null,
+
+        property_name: matchedProperty ? matchedProperty.name : hostawayName,
+        property_address: matchedProperty ? matchedProperty.address : "",
 
         title: title || "Hostaway Task",
         description: description,
@@ -108,7 +150,7 @@ export default async function handler(req, res) {
       };
     });
 
-    // 7. INSERT INTO SUPABASE
+    // 8. INSERT / UPDATE MAINTENANCE JOBS
     const { error } = await supabase
       .from("maintenance_jobs")
       .upsert(rows, { onConflict: "id" });
@@ -125,6 +167,15 @@ export default async function handler(req, res) {
       total_tasks: tasks.length,
       completed_tasks: completedTasks.length,
       inserted_or_updated: rows.length,
+      mapped_jobs: rows.filter((r) => r.crm_property_id).length,
+      unmapped_jobs: rows.filter((r) => !r.crm_property_id).length,
+      sample_rows: rows.slice(0, 5).map((r) => ({
+        id: r.id,
+        hostaway_listing_id: r.hostaway_listing_id,
+        hostaway_listing_name: r.hostaway_listing_name,
+        crm_property_id: r.crm_property_id,
+        property_name: r.property_name,
+      })),
     });
   } catch (error) {
     return res.status(500).json({
