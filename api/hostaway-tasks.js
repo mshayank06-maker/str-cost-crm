@@ -415,7 +415,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 12. CREATE HOSTAWAY EXPENSES WITH PDF LINK FALLBACK
+    // 12. CREATE HOSTAWAY EXPENSES
     const hostawayExpenseResults = [];
 
     for (const invoice of createdInvoices) {
@@ -515,7 +515,6 @@ export default async function handler(req, res) {
         jobTitle: job.title,
         jobDone: job.job_done,
         taskName: job.task_name,
-        invoicePdfUrl,
       });
 
       const expensePayload = {
@@ -532,8 +531,9 @@ export default async function handler(req, res) {
         categories: [],
         categoriesNames: ["Maintenance"],
 
-        // Hostaway appears to ignore URL-based attachments on create.
-        // We still send this, but the invoice URL is also inside concept.
+        // Hostaway currently ignores public URL attachments on create.
+        // Kept here in case Hostaway later supports it.
+        // The invoice PDF is still saved in Supabase/CRM.
         attachments: [
           {
             name: pdfFileName,
@@ -565,10 +565,6 @@ export default async function handler(req, res) {
           listingMapId: Number(job.hostaway_listing_id),
           invoice_pdf_url: invoicePdfUrl,
           concept_sent_to_hostaway: concept,
-          attachment_format_sent: {
-            name: pdfFileName,
-            url: invoicePdfUrl,
-          },
         });
       } else {
         await updateInvoiceExpenseStatus(supabase, invoice.id, {
@@ -758,20 +754,14 @@ function makeHostawayExpenseConcept({
   jobTitle,
   jobDone,
   taskName,
-  invoicePdfUrl,
 }) {
   const cleanJob =
     String(jobDone || taskName || jobTitle || "Maintenance")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 85) || "Maintenance";
+      .slice(0, 160) || "Maintenance";
 
-  const url = String(invoicePdfUrl || "").trim();
-
-  return `Maintenance - ${cleanJob} (${invoiceNumber}) Invoice: ${url}`.slice(
-    0,
-    255
-  );
+  return `Maintenance - ${cleanJob} (${invoiceNumber})`.slice(0, 255);
 }
 
 async function createHostawayExpense({ token, payload }) {
