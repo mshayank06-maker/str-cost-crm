@@ -17,24 +17,28 @@ const starterProperties = [
   { id: "P-012", name: "402DRI 2B", address: "Atlantis Avenue", beds: 2, approvalLimit: 100 },
   { id: "P-013", name: "53OXY 1B", address: "Western Gateway", beds: 1, approvalLimit: 100 },
   { id: "P-014", name: "401DRI 2B", address: "Atlantis Avenue", beds: 2, approvalLimit: 100 },
-  { id: "P-015", name: "03OXY 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
+  { id: "P-015", name: "030XY 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
   { id: "P-016", name: "139OXY 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
   { id: "P-017", name: "37ADR 1B", address: "Western Gateway", beds: 1, approvalLimit: 100 },
-  { id: "P-018", name: "1006BAL", address: "Balearic Apartments, 15 Western Gateway", beds: 1, approvalLimit: 100 },
-  { id: "P-019", name: "1007BAL", address: "18 Western Gateway", beds: 1, approvalLimit: 100 },
-  { id: "P-020", name: "207 FAT 2B", address: "19 Atlantis Avenue", beds: 2, approvalLimit: 100 },
-  { id: "P-021", name: "30MAN 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
-  { id: "P-022", name: "129 ADR 1B", address: "Western Gateway", beds: 1, approvalLimit: 100 },
-  { id: "P-023", name: "103 SAI 2B", address: "Atlantis Avenue", beds: 2, approvalLimit: 100 },
-  { id: "P-024", name: "1201 12WG 3B", address: "Garvary Road", beds: 3, approvalLimit: 100 },
-  { id: "P-025", name: "28 ELS 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
-  { id: "P-026", name: "22 HIE 2B", address: "Blair Street", beds: 2, approvalLimit: 100 },
-  { id: "P-027", name: "35COR 2B", address: "14 Western Gateway", beds: 2, approvalLimit: 100 },
-  { id: "P-028", name: "209DRI 2B", address: "28 Elsdale Street", beds: 2, approvalLimit: 100 },
-  { id: "P-029", name: "940XY 2B", address: "17 Bermuda Way", beds: 2, approvalLimit: 100 },
-  { id: "P-030", name: "706 12WG", address: "Western Gateway, Unit D", beds: 1, approvalLimit: 100 },
-  { id: "P-031", name: "2 PLA 1B", address: "13 Derny Avenue", beds: 1, approvalLimit: 100 },
-  { id: "P-032", name: "404 DRI 2B", address: "19 Atlantis Avenue", beds: 2, approvalLimit: 100 },
+  { id: "P-018", name: "130OXY 1B", address: "Western Gateway", beds: 1, approvalLimit: 100 },
+  { id: "P-019", name: "161OXY 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
+  { id: "P-020", name: "65ALA 3B", address: "Western Gateway", beds: 3, approvalLimit: 100 },
+  { id: "P-021", name: "1006BAL", address: "Balearic Apartments, 15 Western Gateway", beds: 1, approvalLimit: 100 },
+  { id: "P-022", name: "1007BAL", address: "18 Western Gateway", beds: 1, approvalLimit: 100 },
+  { id: "P-023", name: "207 FAT 2B", address: "19 Atlantis Avenue", beds: 2, approvalLimit: 100 },
+  { id: "P-024", name: "30MAN 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
+  { id: "P-025", name: "129 ADR 1B", address: "Western Gateway", beds: 1, approvalLimit: 100 },
+  { id: "P-026", name: "103 SAI 2B", address: "Atlantis Avenue", beds: 2, approvalLimit: 100 },
+  { id: "P-027", name: "1201 12WG 3B", address: "Garvary Road", beds: 3, approvalLimit: 100 },
+  { id: "P-028", name: "28 ELS 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
+  { id: "P-029", name: "22 HIE 2B", address: "Blair Street", beds: 2, approvalLimit: 100 },
+  { id: "P-030", name: "35COR 2B", address: "14 Western Gateway", beds: 2, approvalLimit: 100 },
+  { id: "P-031", name: "209DRI 2B", address: "28 Elsdale Street", beds: 2, approvalLimit: 100 },
+  { id: "P-032", name: "940XY 2B", address: "17 Bermuda Way", beds: 2, approvalLimit: 100 },
+  { id: "P-033", name: "706 12WG", address: "Western Gateway, Unit D", beds: 1, approvalLimit: 100 },
+  { id: "P-034", name: "2 PLA 1B", address: "13 Derny Avenue", beds: 1, approvalLimit: 100 },
+  { id: "P-035", name: "404 DRI 2B", address: "19 Atlantis Avenue", beds: 2, approvalLimit: 100 },
+  { id: "P-036", name: "123 OXY 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
 ];
 
 const priceGuide = [
@@ -153,7 +157,12 @@ function calculateJobTotal(job) {
 
 function generateInvoiceNumber(invoices) {
   const year = new Date().getFullYear();
-  return `INV-${year}-${String(invoices.length + 1).padStart(4, "0")}`;
+
+  const currentYearInvoices = invoices.filter((inv) =>
+    String(inv.invoiceNumber || "").startsWith(`INV-${year}-`)
+  );
+
+  return `INV-${year}-${String(currentYearInvoices.length + 1).padStart(4, "0")}`;
 }
 
 export default function App() {
@@ -233,6 +242,7 @@ export default function App() {
 
           return {
             id: job.id,
+            externalId: job.external_id || "",
 
             propertyId: matchedProperty ? matchedProperty.id : "",
             propertyName: matchedProperty
@@ -247,8 +257,10 @@ export default function App() {
             hostawayListingName: job.hostaway_listing_name || "",
 
             title: job.title || "Maintenance Job",
+            description: job.description || "",
             taskName: job.task_name || "Hostaway Task",
             category: job.category || "Maintenance",
+            jobDone: job.job_done || job.task_name || "",
             assignedTo: job.assigned_to || "Hostaway",
             status: job.status || "Completed",
             labourHours: Number(job.labour_hours || 1),
@@ -262,6 +274,8 @@ export default function App() {
       setInvoices(
         (invoicesRes.data || []).map((inv) => ({
           id: inv.id,
+          jobId: inv.job_id || "",
+          source: inv.source || "",
           invoiceNumber: inv.invoice_number,
           invoiceDate: inv.invoice_date,
           dueDate: inv.due_date,
@@ -272,6 +286,7 @@ export default function App() {
           materialsTotal: Number(inv.materials_total || 0),
           total: Number(inv.total || 0),
           status: inv.status,
+          notes: inv.notes || "Paid in full, thank you",
         }))
       );
 
@@ -375,6 +390,7 @@ export default function App() {
 
     const job = {
       id: `JOB-${Date.now()}`,
+      externalId: "",
       propertyId: property.id,
       crmPropertyId: property.id,
       propertyName: property.name,
@@ -382,8 +398,10 @@ export default function App() {
       hostawayListingId: "",
       hostawayListingName: "",
       title: "New Maintenance Job",
+      description: "",
       taskName: guide.task,
       category: guide.category,
+      jobDone: guide.task,
       assignedTo: "Inhouse Handyman",
       status: "Open",
       labourHours: 1,
@@ -392,8 +410,12 @@ export default function App() {
       invoiceStatus: "Not Started",
     };
 
+    const labourTotal = calculateJobLabour(job);
+    const totalCost = calculateJobTotal(job);
+
     const { error } = await supabase.from("maintenance_jobs").insert({
       id: job.id,
+      external_id: job.externalId,
       property_id: job.propertyId,
       crm_property_id: job.crmPropertyId,
       property_name: job.propertyName,
@@ -401,13 +423,17 @@ export default function App() {
       hostaway_listing_id: job.hostawayListingId,
       hostaway_listing_name: job.hostawayListingName,
       title: job.title,
+      description: job.description,
       task_name: job.taskName,
       category: job.category,
+      job_done: job.jobDone,
       assigned_to: job.assignedTo,
       status: job.status,
       labour_hours: job.labourHours,
       labour_rate: job.labourRate,
+      labour_total: labourTotal,
       material_cost: job.materialCost,
+      total_cost: totalCost,
       invoice_status: job.invoiceStatus,
     });
 
@@ -432,21 +458,28 @@ export default function App() {
     const job = updated.find((j) => j.id === selectedMaintenanceId);
     if (!job) return;
 
+    const labourTotal = calculateJobLabour(job);
+    const totalCost = calculateJobTotal(job);
+
     await supabase
       .from("maintenance_jobs")
       .update({
         property_id: job.propertyId || null,
-        crm_property_id: job.propertyId || null,
+        crm_property_id: job.crmPropertyId || job.propertyId || null,
         property_name: job.propertyName,
         property_address: job.propertyAddress,
         title: job.title,
+        description: job.description || "",
         task_name: job.taskName,
         category: job.category,
+        job_done: job.jobDone || job.taskName,
         assigned_to: job.assignedTo,
         status: job.status,
         labour_hours: job.labourHours,
         labour_rate: job.labourRate,
+        labour_total: labourTotal,
         material_cost: job.materialCost,
+        total_cost: totalCost,
         invoice_status: job.invoiceStatus,
       })
       .eq("id", job.id);
@@ -491,8 +524,12 @@ export default function App() {
       ...selectedMaintenance,
       taskName: guide.task,
       category: guide.category,
+      jobDone: guide.task,
       labourRate: guide.hourlyRate,
     };
+
+    const labourTotal = calculateJobLabour(updatedJob);
+    const totalCost = calculateJobTotal(updatedJob);
 
     setMaintenance((prev) =>
       prev.map((job) =>
@@ -505,7 +542,10 @@ export default function App() {
       .update({
         task_name: updatedJob.taskName,
         category: updatedJob.category,
+        job_done: updatedJob.jobDone,
         labour_rate: updatedJob.labourRate,
+        labour_total: labourTotal,
+        total_cost: totalCost,
       })
       .eq("id", updatedJob.id);
   }
@@ -526,39 +566,83 @@ export default function App() {
     }
   }
 
-  async function createInvoice() {
-    const property = properties.find((p) => p.id === invoiceForm.propertyId);
-
-    if (!property || invoiceJobs.length === 0) {
-      return alert("No completed jobs ready to invoice.");
+  async function createInvoiceForJob(job) {
+    if (!job) {
+      return alert("No job selected.");
     }
 
-    const labourSubtotal = invoiceJobs.reduce(
-      (sum, job) => sum + calculateJobLabour(job),
-      0
-    );
+    if (job.status !== "Completed") {
+      return alert("Only completed jobs can be invoiced.");
+    }
 
-    const materialsTotal = invoiceJobs.reduce(
-      (sum, job) => sum + Number(job.materialCost || 0),
-      0
-    );
+    if (job.invoiceStatus === "Billed") {
+      return alert("This task has already been invoiced.");
+    }
+
+    if (!job.propertyId && !job.crmPropertyId) {
+      return alert("This job is not mapped to a CRM property.");
+    }
+
+    const propertyId = job.crmPropertyId || job.propertyId;
+
+    const property =
+      properties.find((p) => p.id === propertyId) || {
+        id: propertyId,
+        name: job.propertyName,
+        address: job.propertyAddress,
+      };
+
+    const existingLocalInvoice = invoices.find((inv) => inv.jobId === job.id);
+
+    if (existingLocalInvoice) {
+      setSelectedInvoiceId(existingLocalInvoice.id);
+      setActiveTab("invoices");
+      return alert("An invoice already exists for this task.");
+    }
+
+    const { data: existingDbInvoice, error: existingError } = await supabase
+      .from("invoices")
+      .select("*")
+      .eq("job_id", job.id)
+      .maybeSingle();
+
+    if (existingError) {
+      return alert(existingError.message);
+    }
+
+    if (existingDbInvoice) {
+      alert("An invoice already exists for this task.");
+      await loadData();
+      setSelectedInvoiceId(existingDbInvoice.id);
+      setActiveTab("invoices");
+      return;
+    }
+
+    const labourSubtotal = calculateJobLabour(job);
+    const materialsTotal = Number(job.materialCost || 0);
+    const total = labourSubtotal + materialsTotal;
 
     const invoice = {
-      id: `INVREC-${Date.now()}`,
+      id: `INVREC-${Date.now()}-${job.id}`,
+      jobId: job.id,
+      source: "maintenance_job",
       invoiceNumber: generateInvoiceNumber(invoices),
-      invoiceDate: invoiceForm.invoiceDate,
-      dueDate: invoiceForm.dueDate,
+      invoiceDate: todayISO(),
+      dueDate: todayISO(),
       propertyId: property.id,
       propertyName: property.name,
       propertyAddress: property.address,
       labourSubtotal,
       materialsTotal,
-      total: labourSubtotal + materialsTotal,
+      total,
       status: "Draft",
+      notes: "Paid in full, thank you",
     };
 
     const { error: invoiceError } = await supabase.from("invoices").insert({
       id: invoice.id,
+      job_id: invoice.jobId,
+      source: invoice.source,
       invoice_number: invoice.invoiceNumber,
       invoice_date: invoice.invoiceDate,
       due_date: invoice.dueDate,
@@ -569,11 +653,14 @@ export default function App() {
       materials_total: invoice.materialsTotal,
       total: invoice.total,
       status: invoice.status,
+      notes: invoice.notes,
     });
 
-    if (invoiceError) return alert(invoiceError.message);
+    if (invoiceError) {
+      return alert(invoiceError.message);
+    }
 
-    const items = invoiceJobs.map((job) => ({
+    const item = {
       id: `ITEM-${job.id}-${Date.now()}`,
       invoiceId: invoice.id,
       jobId: job.id,
@@ -581,43 +668,40 @@ export default function App() {
       taskName: job.taskName,
       labourHours: job.labourHours,
       labourRate: job.labourRate,
-      labourCharge: calculateJobLabour(job),
-      materialCost: job.materialCost,
-      totalCost: calculateJobTotal(job),
-    }));
+      labourCharge: labourSubtotal,
+      materialCost: materialsTotal,
+      totalCost: total,
+    };
 
-    const { error: itemError } = await supabase.from("invoice_items").insert(
-      items.map((item) => ({
-        id: item.id,
-        invoice_id: item.invoiceId,
-        job_id: item.jobId,
-        title: item.title,
-        task_name: item.taskName,
-        labour_hours: item.labourHours,
-        labour_rate: item.labourRate,
-        labour_charge: item.labourCharge,
-        material_cost: item.materialCost,
-        total_cost: item.totalCost,
-      }))
-    );
+    const { error: itemError } = await supabase.from("invoice_items").insert({
+      id: item.id,
+      invoice_id: item.invoiceId,
+      job_id: item.jobId,
+      title: item.title,
+      task_name: item.taskName,
+      labour_hours: item.labourHours,
+      labour_rate: item.labourRate,
+      labour_charge: item.labourCharge,
+      material_cost: item.materialCost,
+      total_cost: item.totalCost,
+    });
 
-    if (itemError) return alert(itemError.message);
-
-    const jobIds = invoiceJobs.map((job) => job.id);
+    if (itemError) {
+      await supabase.from("invoices").delete().eq("id", invoice.id);
+      return alert(itemError.message);
+    }
 
     await supabase
       .from("maintenance_jobs")
       .update({ invoice_status: "Billed" })
-      .in("id", jobIds);
+      .eq("id", job.id);
 
     setInvoices((prev) => [invoice, ...prev]);
-    setInvoiceItems((prev) => [...items, ...prev]);
+    setInvoiceItems((prev) => [item, ...prev]);
 
     setMaintenance((prev) =>
-      prev.map((job) =>
-        jobIds.includes(job.id)
-          ? { ...job, invoiceStatus: "Billed" }
-          : job
+      prev.map((m) =>
+        m.id === job.id ? { ...m, invoiceStatus: "Billed" } : m
       )
     );
 
@@ -635,7 +719,7 @@ export default function App() {
     if (jobIds.length) {
       await supabase
         .from("maintenance_jobs")
-        .update({ invoice_status: "Pending" })
+        .update({ invoice_status: "Ready to Invoice" })
         .in("id", jobIds);
     }
 
@@ -650,7 +734,7 @@ export default function App() {
     setMaintenance((prev) =>
       prev.map((job) =>
         jobIds.includes(job.id)
-          ? { ...job, invoiceStatus: "Pending" }
+          ? { ...job, invoiceStatus: "Ready to Invoice" }
           : job
       )
     );
@@ -1005,6 +1089,7 @@ export default function App() {
                       <th>Task</th>
                       <th>Status</th>
                       <th>Total</th>
+                      <th>Invoice</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -1023,6 +1108,23 @@ export default function App() {
                         <td>{job.taskName}</td>
                         <td>{job.status}</td>
                         <td>{money(job.totalCost)}</td>
+                        <td>
+                          {job.status === "Completed" && job.invoiceStatus !== "Billed" ? (
+                            <button
+                              className="mini-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                createInvoiceForJob(job);
+                              }}
+                            >
+                              Invoice
+                            </button>
+                          ) : (
+                            <span className="badge healthy">
+                              {job.invoiceStatus || "Not Started"}
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <button
                             className="mini-danger-btn"
@@ -1143,8 +1245,19 @@ export default function App() {
             <section className="panel list-panel no-print">
               <div className="section-head">
                 <h3>Create Invoice</h3>
-                <button className="action-btn" onClick={createInvoice}>
-                  Generate Invoice
+                <button
+                  className="action-btn"
+                  onClick={() => {
+                    const firstJob = invoiceJobs[0];
+
+                    if (!firstJob) {
+                      return alert("No completed jobs ready to invoice for this property.");
+                    }
+
+                    createInvoiceForJob(firstJob);
+                  }}
+                >
+                  Generate First Ready Task Invoice
                 </button>
               </div>
 
@@ -1195,7 +1308,7 @@ export default function App() {
               </div>
 
               <div className="calc-box">
-                <h4>Jobs Ready to Bill</h4>
+                <h4>Jobs Ready to Bill Separately</h4>
 
                 <div className="table-wrap small">
                   <table>
@@ -1204,13 +1317,14 @@ export default function App() {
                         <th>Job</th>
                         <th>Task</th>
                         <th>Total</th>
+                        <th>Invoice</th>
                       </tr>
                     </thead>
 
                     <tbody>
                       {invoiceJobs.length === 0 ? (
                         <tr>
-                          <td colSpan="3">No completed jobs ready.</td>
+                          <td colSpan="4">No completed jobs ready.</td>
                         </tr>
                       ) : (
                         invoiceJobs.map((job) => (
@@ -1218,6 +1332,14 @@ export default function App() {
                             <td>{job.title}</td>
                             <td>{job.taskName}</td>
                             <td>{money(job.totalCost)}</td>
+                            <td>
+                              <button
+                                className="mini-action-btn"
+                                onClick={() => createInvoiceForJob(job)}
+                              >
+                                Invoice
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -1384,7 +1506,7 @@ export default function App() {
 
                     <div className="invoice-notes">
                       <div className="bill-label">Notes</div>
-                      <p>Paid in full, thank you</p>
+                      <p>{selectedInvoiceWithItems.notes || "Paid in full, thank you"}</p>
                     </div>
                   </div>
                 </>
