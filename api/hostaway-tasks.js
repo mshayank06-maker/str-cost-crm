@@ -415,7 +415,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 12. CREATE HOSTAWAY EXPENSES WITH PDF ATTACHMENT
+    // 12. CREATE HOSTAWAY EXPENSES WITH PDF LINK FALLBACK
     const hostawayExpenseResults = [];
 
     for (const invoice of createdInvoices) {
@@ -444,13 +444,6 @@ export default async function handler(req, res) {
       const expenseDate = job.completed_at
         ? String(job.completed_at).slice(0, 10)
         : todayISO();
-
-      const concept = makeHostawayExpenseConcept({
-        invoiceNumber: invoice.invoice_number,
-        jobTitle: job.title,
-        jobDone: job.job_done,
-        taskName: job.task_name,
-      });
 
       const amount = -Math.abs(Number(invoice.total || 0));
 
@@ -517,6 +510,14 @@ export default async function handler(req, res) {
         continue;
       }
 
+      const concept = makeHostawayExpenseConcept({
+        invoiceNumber: invoice.invoice_number,
+        jobTitle: job.title,
+        jobDone: job.job_done,
+        taskName: job.task_name,
+        invoicePdfUrl,
+      });
+
       const expensePayload = {
         accountId: hostawayAccountId,
         ownerStatementId: null,
@@ -531,8 +532,8 @@ export default async function handler(req, res) {
         categories: [],
         categoriesNames: ["Maintenance"],
 
-        // Hostaway docs show attachments as an array but do not show the exact file object format.
-        // This sends a public PDF URL as an attachment object.
+        // Hostaway appears to ignore URL-based attachments on create.
+        // We still send this, but the invoice URL is also inside concept.
         attachments: [
           {
             name: pdfFileName,
@@ -563,6 +564,7 @@ export default async function handler(req, res) {
           amount,
           listingMapId: Number(job.hostaway_listing_id),
           invoice_pdf_url: invoicePdfUrl,
+          concept_sent_to_hostaway: concept,
           attachment_format_sent: {
             name: pdfFileName,
             url: invoicePdfUrl,
@@ -623,6 +625,7 @@ export default async function handler(req, res) {
         property_name: invoice.property_name,
         total: invoice.total,
         hostaway_expense_status: invoice.hostaway_expense_status,
+        invoice_pdf_url: invoice.invoice_pdf_url,
       })),
       sample_hostaway_expenses: hostawayExpenseResults.slice(0, 5),
     });
@@ -755,14 +758,20 @@ function makeHostawayExpenseConcept({
   jobTitle,
   jobDone,
   taskName,
+  invoicePdfUrl,
 }) {
   const cleanJob =
     String(jobDone || taskName || jobTitle || "Maintenance")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 160) || "Maintenance";
+      .slice(0, 85) || "Maintenance";
 
-  return `Maintenance - ${cleanJob} (${invoiceNumber})`.slice(0, 255);
+  const url = String(invoicePdfUrl || "").trim();
+
+  return `Maintenance - ${cleanJob} (${invoiceNumber}) Invoice: ${url}`.slice(
+    0,
+    255
+  );
 }
 
 async function createHostawayExpense({ token, payload }) {
