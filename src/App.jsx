@@ -1117,6 +1117,7 @@ export default function App() {
                 <table>
                   <thead>
                     <tr>
+                      <th>Date</th>
                       <th>Job</th>
                       <th>Property</th>
                       <th>Task</th>
@@ -1130,7 +1131,7 @@ export default function App() {
                   <tbody>
                     {filteredMaintenanceJobs.length === 0 ? (
                       <tr>
-                        <td colSpan="7">No maintenance jobs found for this month.</td>
+                        <td colSpan="8">No maintenance jobs found for this month.</td>
                       </tr>
                     ) : (
                       filteredMaintenanceJobs.map((job) => (
@@ -1141,6 +1142,7 @@ export default function App() {
                           }
                           onClick={() => setSelectedMaintenanceId(job.id)}
                         >
+                          <td>{formatDate(job.createdAt)}</td>
                           <td>{job.title}</td>
                           <td>{job.propertyName || "Unmapped Property"}</td>
                           <td>{job.taskName}</td>
