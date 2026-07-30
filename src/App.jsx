@@ -39,6 +39,9 @@ const starterProperties = [
   { id: "P-034", name: "2 PLA 1B", address: "13 Derny Avenue", beds: 1, approvalLimit: 100 },
   { id: "P-035", name: "404 DRI 2B", address: "19 Atlantis Avenue", beds: 2, approvalLimit: 100 },
   { id: "P-036", name: "123 OXY 2B", address: "Western Gateway", beds: 2, approvalLimit: 100 },
+  { id: "P-037", name: "20 MOR", address: "1, 2 Lower Dock Walk, E16 2XY", beds: 2, approvalLimit: 100 },
+  { id: "P-038", name: "46 ADR", address: "20 Western Gateway, E16 1BS", beds: 2, approvalLimit: 100 },
+  { id: "P-039", name: "21 ADR", address: "20 Western Gateway, E16 1BS", beds: 2, approvalLimit: 100 },
 ];
 
 const priceGuide = [

@@ -31,6 +31,16 @@ export default async function handler(req, res) {
       });
     }
 
+    /*
+      IMPORTANT:
+      This stops old completed Hostaway tasks from being auto-invoiced in bulk.
+      Only tasks completed on/after this date will be auto-invoiced.
+      You can change this in Vercel Environment Variables:
+      AUTO_INVOICE_FROM_DATE = 2026-05-22
+    */
+    const AUTO_INVOICE_FROM_DATE =
+      process.env.AUTO_INVOICE_FROM_DATE || "2026-05-22";
+
     // 1. GET HOSTAWAY TOKEN
     const tokenRes = await fetch("https://api.hostaway.com/v1/accessTokens", {
       method: "POST",
@@ -184,6 +194,8 @@ export default async function handler(req, res) {
         task.created_at ||
         null;
 
+      const taskAttachments = extractTaskAttachments(task);
+
       const row = {
         id: `HA-${task.id}`,
         external_id: String(task.id),
@@ -220,12 +232,18 @@ export default async function handler(req, res) {
       return {
         rawTask: task,
         row,
+        taskAttachments,
+
+        /*
+          This is now more flexible.
+          Before it required all 3 exact text fields:
+          Labour Hours / What job was done / Materials Cost.
+          That caused auto_invoice_candidates to stay 0.
+        */
         autoInvoiceReady:
           Boolean(matchedProperty) &&
           Boolean(hostawayListingId) &&
-          parsedDetails.hasLabourHours &&
-          parsedDetails.hasJobDone &&
-          parsedDetails.hasMaterialCost,
+          Number(totalCost || 0) > 0,
       };
     });
 
@@ -296,20 +314,29 @@ export default async function handler(req, res) {
     }
 
     // 11. AUTO-CREATE CRM INVOICES
-    const autoInvoiceCandidates = preparedRows
-      .filter((item) => {
-        const jobId = item.row.id;
-        const existingStatus = existingJobStatusById[jobId];
+    const autoInvoiceItems = preparedRows.filter((item) => {
+      const jobId = item.row.id;
+      const existingStatus = existingJobStatusById[jobId];
 
-        return (
-          item.autoInvoiceReady &&
-          !invoicedJobIds.has(jobId) &&
-          existingStatus !== "Billed" &&
-          item.row.crm_property_id &&
-          item.row.status === "Completed"
-        );
-      })
-      .map((item) => item.row);
+      const completedDate = item.row.completed_at
+        ? String(item.row.completed_at).slice(0, 10)
+        : null;
+
+      const isAfterAutoInvoiceStart =
+        completedDate && completedDate >= AUTO_INVOICE_FROM_DATE;
+
+      return (
+        item.autoInvoiceReady &&
+        isAfterAutoInvoiceStart &&
+        !invoicedJobIds.has(jobId) &&
+        existingStatus !== "Billed" &&
+        item.row.crm_property_id &&
+        String(item.row.status || "").toLowerCase() === "completed" &&
+        Number(item.row.total_cost || 0) > 0
+      );
+    });
+
+    const autoInvoiceCandidates = autoInvoiceItems.map((item) => item.row);
 
     const createdInvoices = [];
     const createdInvoiceItems = [];
@@ -415,11 +442,15 @@ export default async function handler(req, res) {
       }
     }
 
-    // 12. CREATE HOSTAWAY EXPENSES
+    // 12. CREATE HOSTAWAY EXPENSES WITH TASK ATTACHMENTS
     const hostawayExpenseResults = [];
 
     for (const invoice of createdInvoices) {
-      const job = autoInvoiceCandidates.find((j) => j.id === invoice.job_id);
+      const candidate = autoInvoiceItems.find(
+        (item) => item.row.id === invoice.job_id
+      );
+
+      const job = candidate?.row;
 
       if (!job) {
         continue;
@@ -466,6 +497,11 @@ export default async function handler(req, res) {
       let invoicePdfUrl = null;
       let pdfFileName = null;
 
+      /*
+        We still generate/save the invoice PDF in Supabase/CRM,
+        but we DO NOT rely on this as Hostaway's attachment,
+        because Hostaway already ignored public URL attachments.
+      */
       try {
         pdfFileName = `${invoice.invoice_number}-${job.id}.pdf`;
 
@@ -495,20 +531,10 @@ export default async function handler(req, res) {
           .update({ invoice_pdf_url: invoicePdfUrl })
           .eq("id", invoice.id);
       } catch (pdfError) {
-        await updateInvoiceExpenseStatus(supabase, invoice.id, {
-          status: "Failed",
-          error: `PDF generation/upload failed: ${pdfError.message}`,
-        });
-
-        hostawayExpenseResults.push({
-          invoice_number: invoice.invoice_number,
-          job_id: invoice.job_id,
-          status: "Failed",
-          error: `PDF generation/upload failed: ${pdfError.message}`,
-        });
-
-        continue;
+        console.log("PDF generation/upload failed:", pdfError.message);
       }
+
+      const taskAttachments = candidate.taskAttachments || [];
 
       const concept = makeHostawayExpenseConcept({
         invoiceNumber: invoice.invoice_number,
@@ -531,15 +557,12 @@ export default async function handler(req, res) {
         categories: [],
         categoriesNames: ["Maintenance"],
 
-        // Hostaway currently ignores public URL attachments on create.
-        // Kept here in case Hostaway later supports it.
-        // The invoice PDF is still saved in Supabase/CRM.
-        attachments: [
-          {
-            name: pdfFileName,
-            url: invoicePdfUrl,
-          },
-        ],
+        /*
+          This is the important amendment:
+          Instead of sending the invoice PDF URL, we send the attachments from the Hostaway task itself.
+          If Hostaway exposes internal file IDs/objects on task attachments, this has the best chance of attaching them.
+        */
+        attachments: taskAttachments,
       };
 
       const expenseResult = await createHostawayExpense({
@@ -564,6 +587,8 @@ export default async function handler(req, res) {
           amount,
           listingMapId: Number(job.hostaway_listing_id),
           invoice_pdf_url: invoicePdfUrl,
+          task_attachments_sent_count: taskAttachments.length,
+          task_attachments_sent_sample: taskAttachments.slice(0, 3),
           concept_sent_to_hostaway: concept,
         });
       } else {
@@ -577,6 +602,7 @@ export default async function handler(req, res) {
           job_id: invoice.job_id,
           status: "Failed",
           error: expenseResult.data || expenseResult.error,
+          task_attachments_sent_count: taskAttachments.length,
           payload: expensePayload,
         });
       }
@@ -586,6 +612,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       message: "Hostaway sync complete",
+      auto_invoice_from_date: AUTO_INVOICE_FROM_DATE,
       total_tasks: tasks.length,
       completed_tasks: completedTasks.length,
       inserted_or_updated: rows.length,
@@ -600,6 +627,27 @@ export default async function handler(req, res) {
       hostaway_expenses_failed: hostawayExpenseResults.filter(
         (r) => r.status === "Failed"
       ).length,
+
+      task_attachment_debug: completedTasks
+        .filter((task) => extractTaskAttachments(task).length > 0)
+        .slice(0, 10)
+        .map((task) => ({
+          id: task.id,
+          title: task.title,
+          status: task.status,
+          listingMapId: task.listingMapId,
+          attachments: task.attachments || null,
+          files: task.files || null,
+          links: task.links || null,
+          images: task.images || null,
+          videos: task.videos || null,
+          documents: task.documents || null,
+          media: task.media || null,
+          photos: task.photos || null,
+          extracted_attachments: extractTaskAttachments(task),
+          all_keys: Object.keys(task),
+        })),
+
       sample_rows: rows.slice(0, 5).map((r) => ({
         id: r.id,
         hostaway_listing_id: r.hostaway_listing_id,
@@ -615,14 +663,15 @@ export default async function handler(req, res) {
         total_cost: r.total_cost,
         invoice_status: r.invoice_status,
       })),
+
       sample_auto_invoices: createdInvoices.slice(0, 5).map((invoice) => ({
         invoice_number: invoice.invoice_number,
         job_id: invoice.job_id,
         property_name: invoice.property_name,
         total: invoice.total,
         hostaway_expense_status: invoice.hostaway_expense_status,
-        invoice_pdf_url: invoice.invoice_pdf_url,
       })),
+
       sample_hostaway_expenses: hostawayExpenseResults.slice(0, 5),
     });
   } catch (error) {
@@ -658,6 +707,106 @@ function extractStructuredTaskDetails(description = "") {
     hasLabourHours: Boolean(labourHoursMatch),
     hasJobDone: Boolean(jobDoneMatch),
     hasMaterialCost: Boolean(materialCostMatch),
+  };
+}
+
+function extractTaskAttachments(task = {}) {
+  const possibleSources = [
+    task.attachments,
+    task.files,
+    task.links,
+    task.images,
+    task.videos,
+    task.documents,
+    task.media,
+    task.photos,
+    task.photo,
+    task.attachment,
+    task.file,
+  ];
+
+  const collected = [];
+
+  possibleSources.forEach((source) => {
+    if (!source) return;
+
+    if (Array.isArray(source)) {
+      source.forEach((item) => collected.push(item));
+    } else if (typeof source === "object") {
+      collected.push(source);
+    } else if (typeof source === "string") {
+      collected.push(source);
+    }
+  });
+
+  const normalised = collected
+    .map((item) => normaliseAttachment(item))
+    .filter(Boolean);
+
+  const deduped = [];
+  const seen = new Set();
+
+  normalised.forEach((item) => {
+    const key =
+      item.id ||
+      item.url ||
+      item.fileUrl ||
+      item.file_url ||
+      item.path ||
+      item.name ||
+      JSON.stringify(item);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(item);
+    }
+  });
+
+  return deduped;
+}
+
+function normaliseAttachment(item) {
+  if (!item) return null;
+
+  if (typeof item === "string") {
+    return {
+      url: item,
+      name: item.split("/").pop() || "attachment",
+    };
+  }
+
+  if (typeof item !== "object") {
+    return null;
+  }
+
+  const url =
+    item.url ||
+    item.fileUrl ||
+    item.file_url ||
+    item.path ||
+    item.publicUrl ||
+    item.public_url ||
+    item.src ||
+    item.href ||
+    "";
+
+  const name =
+    item.name ||
+    item.fileName ||
+    item.filename ||
+    item.originalName ||
+    item.original_name ||
+    item.title ||
+    (url ? String(url).split("/").pop() : "attachment");
+
+  /*
+    Keep original fields because Hostaway may require an internal attachment id.
+    Also add a normalized name/url in case the API accepts those.
+  */
+  return {
+    ...item,
+    name,
+    url,
   };
 }
 
